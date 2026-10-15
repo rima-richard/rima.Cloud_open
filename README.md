@@ -56,16 +56,19 @@ Release-Tag verweisen. Ein App-Installationslink wird hier nicht beworben.
 Build26 ersetzt den bisherigen Upstream-Link in den App-Einstellungen
 durch dieses Quellcode-Repository. Er wurde lokal im Simulator geprüft,
 archiviert und signiert exportiert; bei Apple wurde er nicht hochgeladen.
+Build26 ist außerdem auf dem freigegebenen iPhone17Pro installiert und gestartet.
 Build25 wurde zuvor im Simulator geprüft, auf
 dem iPhone17Pro installiert und bei App Store Connect hochgeladen.
-Die App ist noch nicht zur App-Prüfung eingereicht und nicht veröffentlicht. Unlisted-Verteilung
-ist vorgesehen. Das Repository bleibt bis zur Freigabe durch den
-Projektinhaber privat; vor der Einreichung muss der Quellcode für die
-App-Empfänger erreichbar sein.
+Die App ist noch nicht zur App-Prüfung eingereicht und nicht veröffentlicht.
+Unlisted-Verteilung ist vorgesehen. Das Quellcode-Repository
+`rima-richard/rima.Cloud_open` ist seit dem 16.10.2026 auf Freigabe des
+Projektinhabers öffentlich erreichbar. Das Arbeitsrepository
+`rima-richard/rima.Cloud` bleibt privat. Veröffentlicht wurde ausschließlich
+Quellcode; ein App-Installationslink wird weiterhin nur intern verteilt.
 
 ## Übernommene Projektinformationen
 
 Das ursprüngliche README bleibt als [UPSTREAM-README.md](UPSTREAM-README.md)
 erhalten. Die Nextcloud-CI-Dateien liegen als unveränderte Referenz in
 `upstream-ci/`; sie werden in diesem Repository nicht automatisch ausgeführt.
-GitHub Actions ist für die initiale private Bereitstellung deaktiviert.
+GitHub Actions bleibt in beiden Repositories deaktiviert.

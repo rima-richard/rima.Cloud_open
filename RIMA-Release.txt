@@ -49,10 +49,13 @@ FALSE for this documented release scope. Review again before adding France.
 
 Working repository (private): https://github.com/rima-richard/rima.Cloud
 Source-publication repository: https://github.com/rima-richard/rima.Cloud_open
-The publication repository remains private until its owner explicitly makes it public.
+The owner authorized making rima.Cloud_open public on 2026-10-16.
+The working repository remains private; GitHub Actions remain disabled on both.
 Build26 changes only the in-app Source Code link to the rima.Cloud_open
 repository and increments the build number across the app and extensions.
-The corresponding source tag is v1.0.0-build26. The repository remains
-private until the owner makes it public; the link requires repository
-access until then. This build is prepared locally without an Apple upload,
-review submission or publication.
+The corresponding immutable source tag is v1.0.0-build26. The publication
+repository and tag are reachable anonymously. Build26 was installed and
+launched on the authorized iPhone17Pro. This build is prepared locally
+without an Apple upload, review submission or app publication.
+Later documentation-only commits record the visibility change; they do
+not change the tagged Build26 application source or its signed artifacts.
