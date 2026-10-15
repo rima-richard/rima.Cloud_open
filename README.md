@@ -9,7 +9,7 @@ SPDX-License-Identifier: GPL-3.0-or-later
 Angepasster iPhone-Client der rima Pflege GmbH auf Grundlage der
 [offiziellen Nextcloud-iOS-App](https://github.com/nextcloud/ios).
 
-Dieser Quellstand gehört zu **Version 1.0.0, Build 25**. Er basiert auf
+Dieser Quellstand gehört zu **Version 1.0.0, Build 26**. Er basiert auf
 Nextcloud iOS **35.1.0**, Commit
 `dc214c4c92125da009bf9581b83462d4ba36d5fb`.
 
@@ -17,6 +17,7 @@ Nextcloud iOS **35.1.0**, Commit
 
 - Name rima.Cloud, eigene Wolkengrafik und Petrol als Markenfarbe.
 - Voreingestellter Server `https://cloud.rima-pflege.de`.
+- Quellcode-Link in den App-Einstellungen zu `rima-richard/rima.Cloud_open`.
 - Vereinfachte Dateiansicht mit Suche, Dateien/Mehr und separatem Plus.
 - Kurzer Start mit opaler Wolkenanimation.
 - Ausschließlich iPhone; keine iPad-, Mac- oder Vision-Pro-Veröffentlichung.
@@ -45,16 +46,19 @@ Der Programmcode steht unter [GPL-3.0-or-later](LICENSE.txt) mit der
 stehen in `LICENSES/`, `REUSE.toml` und den Danksagungen der App.
 Marken und Grafiken behalten ihre gesonderten Rechtehinweise.
 
-Der Tag `v1.0.0-build25` bezeichnet den zu Build25 gehörenden Quellstand.
+Der Tag `v1.0.0-build26` bezeichnet den zu Build26 gehörenden Quellstand.
 GitHub stellt über **Code → Download ZIP** auch ein Quellarchiv bereit.
 Die Website-Service-Seite kann auf dieses Repository bzw. den passenden
 Release-Tag verweisen. Ein App-Installationslink wird hier nicht beworben.
 
 ## Stand der Bereitstellung
 
-Build25 wurde im Simulator geprüft, auf dem iPhone17Pro installiert
-und bei App Store Connect hochgeladen. Die App ist noch nicht zur
-App-Prüfung eingereicht und nicht veröffentlicht. Unlisted-Verteilung
+Build26 ersetzt den bisherigen Upstream-Link in den App-Einstellungen
+durch dieses Quellcode-Repository. Er wurde lokal im Simulator geprüft,
+archiviert und signiert exportiert; bei Apple wurde er nicht hochgeladen.
+Build25 wurde zuvor im Simulator geprüft, auf
+dem iPhone17Pro installiert und bei App Store Connect hochgeladen.
+Die App ist noch nicht zur App-Prüfung eingereicht und nicht veröffentlicht. Unlisted-Verteilung
 ist vorgesehen. Das Repository bleibt bis zur Freigabe durch den
 Projektinhaber privat; vor der Einreichung muss der Quellcode für die
 App-Empfänger erreichbar sein.

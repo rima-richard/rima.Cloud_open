@@ -1,7 +1,7 @@
 SPDX-FileCopyrightText: 2026 rima Pflege GmbH
 SPDX-License-Identifier: GPL-3.0-or-later
 
-rima.Cloud iPhone - 1.0.0 (25)
+rima.Cloud iPhone - 1.0.0 (26)
 
 Based on Nextcloud iOS 35.1.0, upstream commit dc214c4c92125da009bf9581b83462d4ba36d5fb.
 Changes: rima.Cloud brand, Petrol #006B78, cloud.rima-pflege.de preset,
@@ -50,4 +50,9 @@ FALSE for this documented release scope. Review again before adding France.
 Working repository (private): https://github.com/rima-richard/rima.Cloud
 Source-publication repository: https://github.com/rima-richard/rima.Cloud_open
 The publication repository remains private until its owner explicitly makes it public.
-Build25 program sources are unchanged; publication documentation and inactive CI references have been added.
+Build26 changes only the in-app Source Code link to the rima.Cloud_open
+repository and increments the build number across the app and extensions.
+The corresponding source tag is v1.0.0-build26. The repository remains
+private until the owner makes it public; the link requires repository
+access until then. This build is prepared locally without an Apple upload,
+review submission or publication.

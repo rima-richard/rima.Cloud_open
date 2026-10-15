@@ -71,7 +71,7 @@ final class NCBrandOptions: @unchecked Sendable {
     var linkloginPreferredProviders: String = "https://nextcloud.com/signup-ios"
     var webLoginAutenticationProtocol: String = "rimacloud://"                                        // example "abc://"
     var privacy: String = "https://rima-pflege.de/datenschutz"
-    var sourceCode: String = "https://github.com/nextcloud/ios"
+    var sourceCode: String = "https://github.com/rima-richard/rima.Cloud_open"
     var mobileconfig: String = "/remote.php/dav/provisioning/apple-provisioning.mobileconfig"
     var appStoreUrl: String = "https://apps.apple.com/app/id6823355835"
 
