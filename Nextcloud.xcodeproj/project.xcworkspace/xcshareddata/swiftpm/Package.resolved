@@ -114,8 +114,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/exyte/PopupView.git",
       "state" : {
-        "revision" : "e053f5066f0e8feee5e053a50445ac2819e4b937",
-        "version" : "5.0.6"
+        "revision" : "99695337ce9e965b70e4aa14b49b1a9920017333",
+        "version" : "5.0.8"
       }
     },
     {
