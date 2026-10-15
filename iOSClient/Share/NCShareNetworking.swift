@@ -1,0 +1,284 @@
+// SPDX-FileCopyrightText: Nextcloud GmbH
+// SPDX-FileCopyrightText: 2019 Marino Faggiana
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+import UIKit
+import NextcloudKit
+
+class NCShareNetworking: NSObject {
+    let utilityFileSystem = NCUtilityFileSystem()
+    let database = NCManageDatabase.shared
+    weak var delegate: NCShareNetworkingDelegate?
+    var view: UIView
+    let metadata: tableMetadata
+    let session: NCSession.Session
+    let controller: NCMainTabBarController?
+
+    @MainActor
+    internal var windowScene: UIWindowScene? {
+        SceneManager.shared.getWindowScene(controller: controller)
+    }
+
+    init(metadata: tableMetadata,
+         view: UIView,
+         delegate: NCShareNetworkingDelegate?,
+         session: NCSession.Session,
+         controller: NCMainTabBarController?) {
+        self.metadata = metadata
+        self.view = view
+        self.delegate = delegate
+        self.session = session
+        self.controller = controller
+
+        super.init()
+    }
+
+    private func readDownloadLimit(account: String, token: String) async throws -> NKDownloadLimit? {
+        return try await withCheckedThrowingContinuation { continuation in
+            NextcloudKit.shared.getDownloadLimit(account: account, token: token) { limit, error in
+                if error != .success {
+                    continuation.resume(throwing: error.error)
+                    return
+                } else {
+                    continuation.resume(returning: limit)
+                }
+            }
+        }
+    }
+
+    func readDownloadLimits(account: String, tokens: [String]) async throws {
+        for token in tokens {
+            self.database.deleteDownloadLimit(byAccount: account, shareToken: token)
+            if let downloadLimit = try await readDownloadLimit(account: account, token: token) {
+                self.database.createDownloadLimit(account: account, count: downloadLimit.count, limit: downloadLimit.limit, token: token)
+            }
+        }
+    }
+
+    func readShare(showLoadingIndicator: Bool) {
+        if showLoadingIndicator {
+            NCActivityIndicator.shared.start(backgroundView: view)
+        }
+        let filenamePath = utilityFileSystem.getRelativeFilePath(metadata.fileName, serverUrl: metadata.serverUrl, session: session)
+        let parameter = NKShareParameter(path: filenamePath)
+
+        NextcloudKit.shared.readShares(parameters: parameter, account: metadata.account) { _ in
+        } completion: { account, shares, _, error in
+            if error == .success, let shares = shares {
+                self.database.deleteTableShare(account: account, path: "/" + filenamePath)
+                let home = self.utilityFileSystem.getHomeServer(session: self.session)
+                self.database.addShare(account: self.metadata.account, home: home, shares: shares)
+
+                NextcloudKit.shared.getGroupfolders(account: account) { _ in
+                } completion: { account, results, _, error in
+                    if showLoadingIndicator {
+                        NCActivityIndicator.shared.stop()
+                    }
+                    if error == .success, let groupfolders = results {
+                        self.database.addGroupfolders(account: account, groupfolders: groupfolders)
+                    }
+
+                    Task {
+                        try? await self.readDownloadLimits(account: account, tokens: shares.map(\.token))
+
+                        Task { @MainActor in
+                            self.delegate?.readShareCompleted()
+                        }
+                    }
+                }
+            } else {
+                if showLoadingIndicator {
+                    NCActivityIndicator.shared.stop()
+                }
+                Task {
+                    await showErrorBanner(windowScene: self.windowScene, error: error)
+                }
+                self.delegate?.readShareCompleted()
+            }
+        }
+    }
+
+    func createShare(_ shareable: Shareable, downloadLimit: DownloadLimitViewModel) {
+        NCActivityIndicator.shared.start(backgroundView: view)
+        let filenamePath = utilityFileSystem.getRelativeFilePath(metadata.fileName, serverUrl: metadata.serverUrl, session: session)
+        let capabilities = NCNetworking.shared.capabilities[self.metadata.account] ?? NKCapabilities.Capabilities()
+
+        NextcloudKit.shared.createShare(path: filenamePath,
+                                        shareType: shareable.shareType,
+                                        shareWith: shareable.shareWith,
+                                        publicUpload: false,
+                                        note: shareable.note,
+                                        hideDownload: false,
+                                        password: shareable.password,
+                                        permissions: shareable.permissions,
+                                        attributes: shareable.attributes,
+                                        account: metadata.account) { _ in
+        } completion: { _, share, _, error in
+            NCActivityIndicator.shared.stop()
+
+            if error == .success, let share = share {
+                shareable.idShare = share.idShare
+                let home = self.utilityFileSystem.getHomeServer(session: self.session)
+                self.database.addShare(account: self.metadata.account, home: home, shares: [share])
+
+                if shareable.hasChanges(comparedTo: share) {
+                    self.updateShare(shareable, downloadLimit: downloadLimit, changeDownloadLimit: true)
+                    // Download limit update should happen implicitly on share update.
+                } else {
+                    if case let .limited(limit, _) = downloadLimit,
+                       capabilities.fileSharingDownloadLimit,
+                       shareable.shareType == NKShare.ShareType.publicLink.rawValue,
+                       shareable.itemType == NCShareCommon.itemTypeFile {
+                        self.setShareDownloadLimit(limit, token: share.token)
+                    }
+                }
+
+                Task {
+                    await NCNetworking.shared.transferDispatcher.notifyAllDelegates { delegate in
+                        delegate.transferReloadDataSource(serverUrl: self.metadata.serverUrl, requestData: true, status: nil)
+                    }
+                }
+            } else {
+                Task {
+                    await showErrorBanner(windowScene: self.windowScene, error: error)
+                }
+            }
+
+            self.delegate?.shareCompleted()
+        }
+    }
+
+    func unShare(idShare: Int) {
+        NCActivityIndicator.shared.start(backgroundView: view)
+        NextcloudKit.shared.deleteShare(idShare: idShare, account: metadata.account) { _ in
+        } completion: { account, _, error in
+            NCActivityIndicator.shared.stop()
+
+            if error == .success {
+                self.database.deleteTableShare(account: account, idShare: idShare)
+                self.delegate?.unShareCompleted()
+
+                Task {
+                    await NCNetworking.shared.transferDispatcher.notifyAllDelegates { delegate in
+                        delegate.transferReloadDataSource(serverUrl: self.metadata.serverUrl, requestData: true, status: nil)
+                    }
+                }
+            } else {
+                Task {
+                    await showErrorBanner(windowScene: self.windowScene, error: error)
+                }
+            }
+        }
+    }
+
+    func updateShare(_ shareable: Shareable, downloadLimit: DownloadLimitViewModel, changeDownloadLimit: Bool = false) {
+        NCActivityIndicator.shared.start(backgroundView: view)
+        NextcloudKit.shared.updateShare(idShare: shareable.idShare, password: shareable.password, expireDate: shareable.formattedDateString, permissions: shareable.permissions, note: shareable.note, label: shareable.label, hideDownload: shareable.hideDownload, attributes: shareable.attributes, account: metadata.account) { _ in
+        } completion: { _, share, _, error in
+            NCActivityIndicator.shared.stop()
+
+            if error == .success, let share = share {
+                let home = self.utilityFileSystem.getHomeServer(session: self.session)
+                let capabilities = NCNetworking.shared.capabilities[self.metadata.account] ?? NKCapabilities.Capabilities()
+
+                self.database.addShare(account: self.metadata.account, home: home, shares: [share])
+                self.delegate?.readShareCompleted()
+
+                if capabilities.fileSharingDownloadLimit,
+                   shareable.shareType == NKShare.ShareType.publicLink.rawValue,
+                   shareable.itemType == NCShareCommon.itemTypeFile,
+                   changeDownloadLimit {
+                    if case let .limited(limit, _) = downloadLimit {
+                        self.setShareDownloadLimit(limit, token: share.token)
+                    } else {
+                        self.removeShareDownloadLimit(token: share.token)
+                    }
+                }
+
+                Task {
+                    await NCNetworking.shared.transferDispatcher.notifyAllDelegates { delegate in
+                        delegate.transferReloadDataSource(serverUrl: self.metadata.serverUrl, requestData: true, status: nil)
+                    }
+                }
+            } else {
+                Task {
+                    await showErrorBanner(windowScene: self.windowScene, error: error)
+                }
+                self.delegate?.updateShareWithError(idShare: shareable.idShare)
+            }
+        }
+    }
+
+    func getSharees(searchString: String) {
+        NCActivityIndicator.shared.start(backgroundView: view)
+        NextcloudKit.shared.searchSharees(search: searchString, account: metadata.account) { _ in
+        } completion: { _, sharees, _, error in
+            NCActivityIndicator.shared.stop()
+
+            if error == .success {
+                self.delegate?.getSharees(sharees: sharees)
+            } else {
+                Task {
+                    let windowScene = await SceneManager.shared.getWindowScene(controller: self.controller)
+                    await showErrorBanner(windowScene: windowScene, error: error)
+                }
+                self.delegate?.getSharees(sharees: nil)
+            }
+        }
+    }
+
+    // MARK: - Download Limit
+
+    ///
+    /// Remove the download limit on the share, if existent.
+    ///
+    func removeShareDownloadLimit(token: String) {
+        let capabilities = NCNetworking.shared.capabilities[self.metadata.account] ?? NKCapabilities.Capabilities()
+
+        if !capabilities.fileSharingDownloadLimit || token.isEmpty {
+            return
+        }
+
+        NCActivityIndicator.shared.start(backgroundView: view)
+
+        NextcloudKit.shared.removeShareDownloadLimit(account: metadata.account, token: token) { error in
+            NCActivityIndicator.shared.stop()
+
+            if error == .success {
+                self.delegate?.downloadLimitRemoved(by: token)
+            } else {
+                Task {
+                    await showErrorBanner(windowScene: self.windowScene, error: error)
+                }
+            }
+        }
+    }
+
+    ///
+    /// Set the download limit for the share.
+    ///
+    /// - Parameter limit: The new download limit to set.
+    ///
+    func setShareDownloadLimit(_ limit: Int, token: String) {
+        let capabilities = NCNetworking.shared.capabilities[self.metadata.account] ?? NKCapabilities.Capabilities()
+
+        if !capabilities.fileSharingDownloadLimit || token.isEmpty {
+            return
+        }
+
+        NCActivityIndicator.shared.start(backgroundView: view)
+
+        NextcloudKit.shared.setShareDownloadLimit(account: metadata.account, token: token, limit: limit) { error in
+            NCActivityIndicator.shared.stop()
+
+            if error == .success {
+                self.delegate?.downloadLimitSet(to: limit, by: token)
+            } else {
+                self.delegate?.downloadLimitRemoved(by: token)
+                Task {
+                    await showErrorBanner(windowScene: self.windowScene, error: error)
+                }
+            }
+        }
+    }
+}

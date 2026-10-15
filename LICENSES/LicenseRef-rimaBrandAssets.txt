@@ -1,0 +1,7 @@
+rima.Cloud brand artwork
+
+Copyright 2026 rima Pflege GmbH. All rights reserved.
+
+The project owner supplied this artwork for use in the rima.Cloud development app.
+This notice grants no additional trademark or artwork rights to third parties.
+Source: https://cloud.rima-pflege.de/themes/rima-cloud/core/img/cloud-app-v1.png

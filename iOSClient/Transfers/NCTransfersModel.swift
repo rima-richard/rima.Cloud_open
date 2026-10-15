@@ -1,0 +1,300 @@
+// SPDX-FileCopyrightText: Nextcloud GmbH
+// SPDX-FileCopyrightText: 2025 Marino Faggiana
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+import Foundation
+import NextcloudKit
+
+internal enum TransfersFilter: Sendable {
+    case waiting
+    case progress
+    case error
+
+    var statuses: [Int] {
+        switch self {
+        case .waiting:
+            return NCGlobal.shared.metadatasStatusInWaiting
+        case .progress:
+            return NCGlobal.shared.metadatasStatusDownloadingUploading
+        case .error:
+            return NCGlobal.shared.metadatasStatusInError
+        }
+    }
+}
+
+final class TransfersViewModel: ObservableObject, NCMetadataDownloadTransfersSuccessDelegate, NCMetadataUploadTransfersSuccessDelegate {
+    @Published var metadatas: [tableMetadata] = []
+    @Published var progressMap: [String: Float] = [:]
+    @Published var showFlushMessage = false
+    @Published var inWaitingCount = 0
+    @Published var inProgressCount = 0
+    @Published var inErrorCount = 0
+
+    @Published private(set) var selectedFilter: TransfersFilter = .progress
+
+    private var isLoadingTransfers = false
+    private let transfersLimit = 100
+
+    // Dependencies
+    private let session: NCSession.Session
+    private let database = NCManageDatabase.shared
+    private let networking = NCNetworking.shared
+    private let utilityFileSystem = NCUtilityFileSystem()
+    private let global = NCGlobal.shared
+    internal let sceneIdentifier: String = UUID().uuidString
+
+    init(session: NCSession.Session) {
+        self.session = session
+
+        Task { @MainActor in
+            await NCNetworking.shared.transferDispatcher.addDelegate(self)
+            await NCNetworking.shared.metadataUploadTranfersSuccess.addDelegate(self)
+            await NCNetworking.shared.metadataDownloadTranfersSuccess.addDelegate(self)
+            await pollTransfers()
+        }
+    }
+
+    deinit {
+        print("deinit")
+    }
+
+    func detach() {
+        Task { @MainActor in
+            await NCNetworking.shared.transferDispatcher.removeDelegate(self)
+            await NCNetworking.shared.metadataUploadTranfersSuccess.removeDelegate(self)
+            await NCNetworking.shared.metadataDownloadTranfersSuccess.removeDelegate(self)
+        }
+    }
+
+    @MainActor
+    func pollTransfers() async {
+        while !Task.isCancelled {
+            if !isXcodeRunningForPreviews {
+                await loadTransfers()
+            }
+            try? await Task.sleep(for: .seconds(0.5))
+        }
+    }
+
+    @MainActor
+    func selectFilter(_ filter: TransfersFilter) async {
+        guard selectedFilter != filter else {
+            return
+        }
+
+        selectedFilter = filter
+        await loadTransfers()
+    }
+
+    @MainActor
+    private func loadTransfers() async {
+        guard !isLoadingTransfers else {
+            return
+        }
+
+        isLoadingTransfers = true
+        defer {
+            isLoadingTransfers = false
+        }
+
+        let uploadTransfersSuccess = await networking.metadataUploadTranfersSuccess.getAll()
+        let result = await database.getTransferAsync(
+            tranfersSuccess: uploadTransfersSuccess,
+            status: selectedFilter.statuses,
+            offset: 0,
+            limit: transfersLimit
+        )
+
+        metadatas = result.metadatas
+        inWaitingCount = result.inWaiting
+        inProgressCount = result.inProgress
+        inErrorCount = result.inError
+    }
+
+    func cancel(item: tableMetadata) async {
+        guard let metadata = await database.getMetadataFromOcIdAndocIdTransferAsync(item.ocIdTransfer) else {
+            return
+        }
+
+        guard !metadata.backgroundUploadJobIdentifier.isEmpty else {
+            await networking.cancelTask(metadata: metadata)
+            return
+        }
+
+        if metadata.backgroundUploadJobIdentifier == "pending" {
+            let resumesQueue = metadata.status == global.metadataStatusUploadError
+
+            if resumesQueue {
+                // Discarding the blocking error is an explicit request to continue with the other files.
+                NCPreferences().setBackgroundUploadSuspended(false, account: metadata.account)
+            }
+
+            await database.deleteMetadataAsync(id: metadata.ocId)
+
+            if resumesQueue, #available(iOS 27, *) {
+                _ = await NCBackgroundUploadExtensionManager.shared.ensureEnabled()
+            }
+            return
+        }
+
+        metadata.backgroundUploadCancellationRequested = true
+        await database.replaceMetadataAsync(ocId: metadata.ocId, metadata: metadata)
+        if #available(iOS 27, *) {
+            await NCBackgroundUploadExtensionManager.shared.cancelUploads(account: metadata.account)
+        }
+    }
+
+    func canRetry(item: tableMetadata) -> Bool {
+        item.status == global.metadataStatusUploadError &&
+        item.backgroundUploadJobIdentifier == "pending" &&
+        !item.backgroundUploadCancellationRequested
+    }
+
+    func retry(item: tableMetadata) async {
+        guard #available(iOS 27, *) else {
+            return
+        }
+
+        guard let metadata = await database.getMetadataFromOcIdAndocIdTransferAsync(item.ocIdTransfer),
+              canRetry(item: metadata) else {
+            return
+        }
+
+        guard await database.getTableAccountAsync(
+            predicate: NSPredicate(format: "account == %@ AND autoUploadStart == true", metadata.account)
+        ) != nil else {
+            return
+        }
+
+        // Retrying one failed item explicitly resumes the background queue for its account.
+        NCPreferences().setBackgroundUploadSuspended(false, account: metadata.account)
+
+        guard await NCBackgroundUploadExtensionManager.shared.ensureEnabled() else {
+            return
+        }
+
+        metadata.backgroundUploadCancellationRequested = false
+        metadata.backgroundUploadRetryCount = 0
+        metadata.backgroundUploadNextRetryDate = nil
+        metadata.sessionError = ""
+        metadata.errorCode = 0
+        metadata.sessionDate = Date()
+        metadata.status = global.metadataStatusWaitUpload
+
+        await database.replaceMetadataAsync(ocId: metadata.ocId, metadata: metadata)
+
+        _ = await NCBackgroundUploadExtensionManager.shared.ensureEnabled()
+    }
+
+    func progress(for item: tableMetadata) -> Float {
+        let serverUrl = item.serverUrl
+        let fileName = item.fileName
+        let key = "\(serverUrl)|\(fileName)"
+        if item.status == global.metadataStatusDownloading || item.status == global.metadataStatusUploading {
+            return progressMap[key] ?? Float(0)
+        } else {
+            return Float(0)
+        }
+    }
+
+    func status(for item: tableMetadata) -> (symbol: String, status: String, info: String) {
+        let sizeText: String = {
+            return utilityFileSystem.transformedSize(item.size)
+        }()
+
+        switch item.status {
+        case global.metadataStatusWaitCreateFolder:
+            return ("arrow.triangle.2.circlepath", NSLocalizedString("_status_wait_create_folder_", comment: ""), "")
+        case global.metadataStatusWaitDelete:
+            return ("trash.circle", NSLocalizedString("_status_wait_delete_", comment: ""), "")
+        case global.metadataStatusWaitFavorite:
+            return ("star.circle", NSLocalizedString("_status_wait_favorite_", comment: ""), "")
+        case global.metadataStatusWaitCopy:
+            return ("c.circle", NSLocalizedString("_status_wait_copy_", comment: ""), "")
+        case global.metadataStatusWaitMove:
+            return ("m.circle", NSLocalizedString("_status_wait_move_", comment: ""), "")
+        case global.metadataStatusWaitRename:
+            return ("a.circle", NSLocalizedString("_status_wait_rename_", comment: ""), "")
+        case global.metadataStatusWaitDownload:
+            return ("arrow.triangle.2.circlepath", NSLocalizedString("_status_wait_download_", comment: ""), sizeText)
+        case global.metadataStatusDownloading:
+            return ("arrowshape.down.circle", NSLocalizedString("_status_downloading_", comment: ""), sizeText)
+        case global.metadataStatusWaitUpload:
+            return ("arrow.triangle.2.circlepath", NSLocalizedString("_status_wait_upload_", comment: ""), "")
+        case global.metadataStatusUploading:
+            return ("arrowshape.up.circle", NSLocalizedString("_status_uploading_", comment: ""), sizeText)
+        case global.metadataStatusDownloadError, global.metadataStatusUploadError:
+            let symbol = "exclamationmark.circle"
+            var status = NSLocalizedString("_status_upload_error_", comment: "")
+            if !canRetry(item: item), let sessionDate = item.sessionDate {
+                let elapsed = Date().timeIntervalSince(sessionDate)
+                let remaining = max(0, 300 - elapsed)
+
+                if remaining > 0 {
+                    let minutesLeft = Int(remaining / 60)
+                    let secondsLeft = Int(remaining.truncatingRemainder(dividingBy: 60))
+                    // Format the remaining retry time.
+                    if minutesLeft > 0 {
+                        status += " – \(minutesLeft) " + NSLocalizedString("_retry_minutes_", comment: "")
+                    } else {
+                        status += " – \(secondsLeft) " + NSLocalizedString("_retry_seconds_", comment: "")
+                    }
+                } else {
+                    status += " – " + NSLocalizedString("_retry_soon_", comment: "")
+                }
+            }
+            return (symbol, status, item.sessionError)
+        case global.metadataStatusNormal:
+            return ("checkmark.circle", NSLocalizedString("_done_", comment: ""), sizeText)
+        default:
+            return ("exclamationmark.circle", "", "")
+        }
+    }
+
+    func isAutoUpload(item: tableMetadata) -> Bool {
+        item.sessionSelector == global.selectorUploadAutoUpload
+    }
+
+    func wwanWaitInfoIfNeeded(for item: tableMetadata) -> String? {
+        if item.session == NCNetworking.shared.sessionUploadBackgroundWWan,
+           !(NCNetworking.shared.networkReachability == .reachableEthernetOrWiFi) {
+            return NSLocalizedString("_waiting_for_", comment: "") + " " + NSLocalizedString("_reachable_wifi_", comment: "")
+        }
+        return nil
+    }
+
+    func metadataUploadTransferWillFlush(hasLivePhotos: Bool) {
+        if hasLivePhotos {
+            DispatchQueue.main.async {
+                self.showFlushMessage = true
+            }
+        }
+    }
+
+    func metadataUploadTransferDidFlush(hasLivePhotos: Bool) {
+        if hasLivePhotos {
+            DispatchQueue.main.async {
+                self.showFlushMessage = false
+            }
+        }
+    }
+
+    func metadataDownloadTransferWillFlush() { }
+
+    func metadataDownloadTransferDidFlush() { }
+}
+
+extension TransfersViewModel: NCTransferDelegate {
+    func transferReloadData(serverUrl: String?) { }
+
+    func transferReloadDataSource(serverUrl: String?, requestData: Bool, status: Int?) { }
+
+    func transferChange(networkingStatus: String, account: String, fileName: String, serverUrl: String, selector: String?, ocId: String, destination: String?, error: NKError) { }
+
+    func transferProgressDidUpdate(progress: Float, totalBytes: Int64, totalBytesExpected: Int64, fileName: String, serverUrl: String) {
+        Task { @MainActor in
+            let key = "\(serverUrl)|\(fileName)"
+            progressMap[key] = progress
+        }
+    }
+}

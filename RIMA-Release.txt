@@ -1,0 +1,53 @@
+SPDX-FileCopyrightText: 2026 rima Pflege GmbH
+SPDX-License-Identifier: GPL-3.0-or-later
+
+rima.Cloud iPhone - 1.0.0 (25)
+
+Based on Nextcloud iOS 35.1.0, upstream commit dc214c4c92125da009bf9581b83462d4ba36d5fb.
+Changes: rima.Cloud brand, Petrol #006B78, cloud.rima-pflege.de preset,
+simplified file navigation and glass dock, opal cloud launch screen,
+iPhone-only family, Firebase removed, HTTPS ATS defaults, permission
+requests limited to enabled features, coordinate logging removed.
+Original file and optional end-to-end encryption functions are retained.
+
+License: GPL-3.0-or-later with upstream Apple App Store exception (COPYING.iOS).
+See LICENSE.txt, LICENSES/, REUSE.toml and acknowledgements. rima brand
+assets have their separate attribution terms; those do not restrict the
+GPL-covered program. Build tools and operating-system SDKs are supplied
+by their respective publishers. No signing keys, profiles, credentials,
+customer files or server configuration are included in this source.
+
+Build: Xcode 27.0 (27A266a) on macOS with iOS 27 SDK; minimum app OS iOS 17.
+Open Nextcloud.xcodeproj, select rima.Cloud. Resolve packages from
+Nextcloud.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved.
+SwiftPM fetches unmodified upstream libraries using the exact pinned
+revisions; package declarations and the lockfile accompany this source.
+Choose your own team, bundle identifiers and App Groups for device signing.
+Firebase/GoogleService-Info.plist is no longer required.
+
+Simulator build:
+xcodebuild build -project Nextcloud.xcodeproj -scheme rima.Cloud -configuration Debug -destination 'platform=iOS Simulator,name=iPhone 17 Pro' CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=-
+
+Unit tests (no test server needed):
+xcodebuild test -project Nextcloud.xcodeproj -scheme rima.Cloud -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:NextcloudUnitTests CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=-
+
+Archive:
+xcodebuild archive -project Nextcloud.xcodeproj -scheme rima.Cloud -configuration Release -destination 'generic/platform=iOS' -archivePath rima.Cloud.xcarchive
+
+SwiftPM custom Realm/GRDB include paths expect SourcePackages underneath
+DerivedData. If overriding -clonedSourcePackagesDirPath, provide a symlink
+from DerivedData/SourcePackages to that checkout directory.
+
+Source delivery is a release requirement. This local package must be
+made available to recipients with clear directions from the App Store
+listing or app. A link to the unmodified Nextcloud repository alone does
+not supply these rima.Cloud changes. Public GitHub is optional.
+
+Apple export questionnaire: standard algorithms, no distribution in France;
+Apple indicates no documents are required. Non-exempt-encryption flag is
+FALSE for this documented release scope. Review again before adding France.
+
+Working repository (private): https://github.com/rima-richard/rima.Cloud
+Source-publication repository: https://github.com/rima-richard/rima.Cloud_open
+The publication repository remains private until its owner explicitly makes it public.
+Build25 program sources are unchanged; publication documentation and inactive CI references have been added.
