@@ -61,7 +61,12 @@ class NCNetworkingE2EEMarkFolder: NSObject {
         await self.database.createDirectory(metadata: metadata)
 
         await self.database.deleteE2eEncryptionAsync(predicate: NSPredicate(format: "account == %@ AND serverUrl == %@", metadata.account, serverUrlFileName))
-        await self.database.updateCounterE2eMetadataAsync(account: account, ocIdServerUrl: metadata.ocId, counter: 0)
+        do {
+            try await database.initializeE2eeCounterAsync(account: account, ocIdServerUrl: metadata.ocId,
+                                                         requiresV2: capabilities.e2EEApiVersion.hasPrefix("2"))
+        } catch {
+            return .invalidData
+        }
 
         // upload e2ee metadata
         error = await NCNetworkingE2EE().createInitialMetadata(

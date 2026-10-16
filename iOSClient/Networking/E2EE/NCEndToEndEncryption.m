@@ -13,6 +13,9 @@
 #import <openssl/provider.h>
 #import <openssl/evp.h>
 #import <openssl/err.h>
+#import <limits.h>
+#import <sys/stat.h>
+#import <unistd.h>
 
 #define addName(field, value) X509_NAME_add_entry_by_txt(name, field, MBSTRING_ASC, (unsigned char *)value, -1, -1, 0);
 
@@ -36,6 +39,14 @@
 #define AES_GCM_TAG_LENGTH          16
 #define AES_SALT_LENGTH             40
 #define AES_TAG_LENGTH              16
+
+// Older E2EE clients used 16-byte nonces; current clients generate 12 bytes.
+static BOOL NCValidGCMParameters(NSData *key, int keyLen, NSData *iv, NSData *tag) {
+    return (keyLen == AES_KEY_128_LENGTH || keyLen == AES_KEY_256_LENGTH) &&
+        key.length == (NSUInteger)keyLen &&
+        (iv.length == AES_IVEC_LENGTH || iv.length == 16) &&
+        tag.length == AES_GCM_TAG_LENGTH;
+}
 
 @interface NCEndToEndEncryption ()
 {
@@ -208,20 +219,17 @@ void nk_openssl_load_legacy_provider_if_needed(void) {
 
 - (NSString *)extractPublicKeyFromCertificate:(NSString *)pemCertificate
 {
-    const char *ptrCert = [pemCertificate cStringUsingEncoding:NSUTF8StringEncoding];
-    
-    BIO *certBio = BIO_new(BIO_s_mem());
-    BIO_write(certBio, ptrCert,(unsigned int)strlen(ptrCert));
-    
+    NSData *pem = [pemCertificate dataUsingEncoding:NSUTF8StringEncoding];
+    if (!pem.length || pem.length > INT_MAX) return nil;
+    BIO *certBio = BIO_new_mem_buf(pem.bytes, (int)pem.length);
+    if (!certBio) return nil;
     X509 *certX509 = PEM_read_bio_X509(certBio, NULL, NULL, NULL);
     if (!certX509) {
-        fprintf(stderr, "unable to parse certificate in memory\n");
+        BIO_free(certBio);
         return nil;
     }
-    
-    EVP_PKEY *pkey;
-    pkey = X509_get_pubkey(certX509);
-    NSString *publicKey = [self pubKeyToString:pkey];
+    EVP_PKEY *pkey = X509_get_pubkey(certX509);
+    NSString *publicKey = pkey ? [self pubKeyToString:pkey] : nil;
     
     EVP_PKEY_free(pkey);
     BIO_free(certBio);
@@ -478,6 +486,7 @@ cleanup:
 
 - (NSData *)decryptPrivateKey:(NSString *)privateKey passphrase:(NSString *)passphrase
 {
+    if (!privateKey || !passphrase) return nil;
     NSMutableData *plain = [NSMutableData new];
     NSMutableData *key = [NSMutableData dataWithLength:PBKDF2_KEY_LENGTH / 8];
 
@@ -504,7 +513,7 @@ cleanup:
     NSData *initializationVector = [[NSData alloc] initWithBase64EncodedString:cipherArray[1] options:0];
     NSData *salt = [[NSData alloc] initWithBase64EncodedString:cipherArray[2] options:0];
 
-    if (!cipher || !authenticationTag || !initializationVector || !salt) {
+    if (!NCValidGCMParameters(key, AES_KEY_256_LENGTH, initializationVector, authenticationTag) || !salt.length || salt.length > INT_MAX) {
         NSLog(@"One or more components (cipher, tag, IV, salt) are missing");
         return nil;
     }
@@ -613,65 +622,43 @@ cleanup:
 
 - (NSData *)decryptPayloadFile:(NSString *)encrypted key:(NSString *)key
 {
-    NSMutableData *plain;
+    if (!encrypted || !key) return nil;
     NSRange range = [encrypted rangeOfString:IV_DELIMITER_ENCODED];
     if (range.location == NSNotFound) {
         range = [encrypted rangeOfString:IV_DELIMITER_ENCODED_OLD];
-        if (range.location == NSNotFound) {
-            return nil;
-        }
+        if (range.location == NSNotFound) return nil;
     }
 
-    // Cipher
-    NSString *cipher = [encrypted substringToIndex:(range.location)];
-    NSData *cipherData = [[NSData alloc] initWithBase64EncodedString:cipher options:0];
-
-    // Key
+    NSData *fullCipher = [[NSData alloc] initWithBase64EncodedString:[encrypted substringToIndex:range.location] options:0];
+    if (fullCipher.length < AES_GCM_TAG_LENGTH) return nil;
+    NSData *cipher = [fullCipher subdataWithRange:NSMakeRange(0, fullCipher.length - AES_GCM_TAG_LENGTH)];
+    NSData *tag = [fullCipher subdataWithRange:NSMakeRange(fullCipher.length - AES_GCM_TAG_LENGTH, AES_GCM_TAG_LENGTH)];
     NSData *keyData = [[NSData alloc] initWithBase64EncodedString:key options:0];
-
-    // Initialization Vector
-    NSString *initializationVector  = [encrypted substringWithRange:NSMakeRange(range.location + range.length, encrypted.length - (range.location + range.length))];
-    NSData *initializationVectorData = [[NSData alloc] initWithBase64EncodedString:initializationVector options:0];
-
-    // Authentication Tag
-    NSString *authenticationTag = [cipher substringWithRange:NSMakeRange(cipher.length - AES_GCM_TAG_LENGTH, AES_GCM_TAG_LENGTH)];
-    NSData *authenticationTagData = [[NSData alloc] initWithBase64EncodedString:authenticationTag options:0];
-
-    // Remove Authentication Tag
-    cipherData = [cipherData subdataWithRange:NSMakeRange(0, cipherData.length - AES_GCM_TAG_LENGTH)];
-
-    BOOL result = [self decryptData:cipherData plain:&plain key:keyData keyLen:AES_KEY_128_LENGTH initializationVector:initializationVectorData authenticationTag:authenticationTagData];
-
-    if (plain != nil && result) {
-        return plain;
-    }
-
-    return nil;
+    NSData *iv = [[NSData alloc] initWithBase64EncodedString:[encrypted substringFromIndex:NSMaxRange(range)] options:0];
+    NSMutableData *plain = nil;
+    return [self decryptData:cipher plain:&plain key:keyData keyLen:AES_KEY_128_LENGTH initializationVector:iv authenticationTag:tag] ? plain : nil;
 }
 
 - (NSData *)decryptPayloadFile:(NSString *)encrypted key:(NSString *)key initializationVector:(NSString *)initializationVector authenticationTag:(NSString *)authenticationTag
 {
-    NSMutableData *plain;
-
-    // Remove initializationVector Tag if exists [ANDROID]
-    NSString *android = [@"|" stringByAppendingString: initializationVector];
-    encrypted = [encrypted stringByReplacingOccurrencesOfString:android withString:@""];
-
-    NSData *cipher = [[NSData alloc] initWithBase64EncodedString:encrypted options:0];
-    NSData *keyData = [[NSData alloc] initWithBase64EncodedString:key options:0];
-    NSData *initializationVectorData = [[NSData alloc] initWithBase64EncodedString:initializationVector options:0];
-    NSData *authenticationTagData = [[NSData alloc] initWithBase64EncodedString:authenticationTag options:0];
-
-    // Remove Authentication Tag
-    cipher = [cipher subdataWithRange:NSMakeRange(0, cipher.length - AES_GCM_TAG_LENGTH)];
-
-    BOOL result = [self decryptData:cipher plain:&plain key:keyData keyLen:AES_KEY_128_LENGTH initializationVector:initializationVectorData authenticationTag:authenticationTagData];
-
-    if (plain != nil && result && plain.length > 0) {
-        return plain;
+    if (!encrypted || !key || !initializationVector || !authenticationTag) return nil;
+    // Android may append exactly one nonce suffix to the base64 payload.
+    NSString *suffix = [IV_DELIMITER_ENCODED stringByAppendingString:initializationVector];
+    if ([encrypted hasSuffix:suffix]) {
+        encrypted = [encrypted substringToIndex:encrypted.length - suffix.length];
     }
+    NSData *fullCipher = [[NSData alloc] initWithBase64EncodedString:encrypted options:0];
+    NSData *keyData = [[NSData alloc] initWithBase64EncodedString:key options:0];
+    NSData *iv = [[NSData alloc] initWithBase64EncodedString:initializationVector options:0];
+    NSData *tag = [[NSData alloc] initWithBase64EncodedString:authenticationTag options:0];
+    if (fullCipher.length < AES_GCM_TAG_LENGTH || !NCValidGCMParameters(keyData, AES_KEY_128_LENGTH, iv, tag)) return nil;
 
-    return nil;
+    // The payload carries the tag as well as the separate metadata field.
+    NSData *appendedTag = [fullCipher subdataWithRange:NSMakeRange(fullCipher.length - AES_GCM_TAG_LENGTH, AES_GCM_TAG_LENGTH)];
+    if (![appendedTag isEqualToData:tag]) return nil;
+    NSData *cipher = [fullCipher subdataWithRange:NSMakeRange(0, fullCipher.length - AES_GCM_TAG_LENGTH)];
+    NSMutableData *plain = nil;
+    return [self decryptData:cipher plain:&plain key:keyData keyLen:AES_KEY_128_LENGTH initializationVector:iv authenticationTag:tag] ? plain : nil;
 }
 
 #
@@ -704,11 +691,15 @@ cleanup:
 
 - (BOOL)decryptFile:(NSString *)fileName fileNameView:(NSString *)fileNameView ocId:(NSString *)ocId userId:(NSString *)userId urlBase:(NSString *)urlBase key:(NSString *)key initializationVector:(NSString *)initializationVector authenticationTag:(NSString *)authenticationTag
 {
+    if (!key || !initializationVector || !authenticationTag) return NO;
     NSData *keyData = [[NSData alloc] initWithBase64EncodedString:key options:0];
     NSData *initializationVectorData = [[NSData alloc] initWithBase64EncodedString:initializationVector options:0];
     NSData *authenticationTagData = [[NSData alloc] initWithBase64EncodedString:authenticationTag options:0];
 
-    return [self decryptFile:[[[NCUtilityFileSystem alloc] init] getDirectoryProviderStorageOcId:ocId fileName:fileName userId: userId urlBase:urlBase] fileNamePlain:[[[NCUtilityFileSystem alloc] init] getDirectoryProviderStorageOcId:ocId fileName:fileNameView userId:userId urlBase:urlBase] key:keyData keyLen:AES_KEY_128_LENGTH initializationVector:initializationVectorData authenticationTag:authenticationTagData];
+    NSString *inputPath = [[[NCUtilityFileSystem alloc] init] getDirectoryProviderStorageOcId:ocId fileName:fileName userId:userId urlBase:urlBase];
+    // Resolving the output must not create a visible placeholder before authentication.
+    NSString *outputPath = [[inputPath stringByDeletingLastPathComponent] stringByAppendingPathComponent:fileNameView];
+    return [self decryptFile:inputPath fileNamePlain:outputPath key:keyData keyLen:AES_KEY_128_LENGTH initializationVector:initializationVectorData authenticationTag:authenticationTagData];
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -892,83 +883,35 @@ cleanup:
 // Encryption data using GCM mode
 - (BOOL)encryptData:(NSData *)plain cipher:(NSMutableData **)cipher key:(NSData *)key keyLen:(int)keyLen initializationVector:(NSData *)initializationVector authenticationTag:(NSData **)authenticationTag
 {
-    int status = 0;
-    int len = 0;
-    
-    // set up key
-    len = keyLen;
-    unsigned char cKey[len];
-    bzero(cKey, sizeof(cKey));
-    [key getBytes:cKey length:len];
+    if (!cipher || !authenticationTag) return NO;
+    *cipher = nil;
+    *authenticationTag = nil;
+    unsigned char tag[AES_GCM_TAG_LENGTH] = {0};
+    if (!plain || plain.length > INT_MAX ||
+        !NCValidGCMParameters(key, keyLen, initializationVector, [NSData dataWithBytes:tag length:sizeof(tag)])) return NO;
 
-    // set up ivec
-    len = AES_IVEC_LENGTH;
-    unsigned char cIV[len];
-    bzero(cIV, sizeof(cIV));
-    [initializationVector getBytes:cIV length:len];
-    
-    // set up tag
-    len = AES_GCM_TAG_LENGTH;
-    unsigned char cTag[len];
-    bzero(cTag, sizeof(cTag));
-    
-    // Create and initialise the context
     EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
-    if (!ctx)
-        return NO;
-    
-    // Initialise the encryption operation
-    if (keyLen == AES_KEY_128_LENGTH)
-        status = EVP_EncryptInit_ex(ctx, EVP_aes_128_gcm(), NULL, NULL, NULL);
-    else if (keyLen == AES_KEY_256_LENGTH)
-        status = EVP_EncryptInit_ex(ctx, EVP_aes_256_gcm(), NULL, NULL, NULL);
-    
-    if (status <= 0) {
-        EVP_CIPHER_CTX_free(ctx);
-        return NO;
-    }
-    
-    // Set IV length. Not necessary if this is 12 bytes (96 bits)
-    status = EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, (int)sizeof(cIV), NULL);
-    if (status <= 0) {
-        EVP_CIPHER_CTX_free(ctx);
-        return NO;
-    }
-    
-    // Initialise key and IV
-    status = EVP_EncryptInit_ex (ctx, NULL, NULL, cKey, cIV);
-    if (status <= 0) {
-        EVP_CIPHER_CTX_free(ctx);
-        return NO;
-    }
-    
-    // Provide the message to be encrypted, and obtain the encrypted output
-    *cipher = [NSMutableData dataWithLength:[plain length]];
-    unsigned char * cCipher = [*cipher mutableBytes];
-    int cCipherLen = 0;
-    status = EVP_EncryptUpdate(ctx, cCipher, &cCipherLen, [plain bytes], (int)[plain length]);
-    if (status <= 0) {
-        EVP_CIPHER_CTX_free(ctx);
-        return NO;
-    }
-    
-    // Finalise the encryption
-    status = EVP_EncryptFinal_ex(ctx, cCipher, &cCipherLen);
-    if (status <= 0) {
-        EVP_CIPHER_CTX_free(ctx);
-        return NO;
-    }
-    
-    // Get the tag
-    status = EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_GET_TAG, (int)sizeof(cTag), cTag);
-    *authenticationTag = [NSData dataWithBytes:cTag length:sizeof(cTag)];
-
-    // Append TAG
-    [*cipher appendData:*authenticationTag];
-
+    if (!ctx) return NO;
+    NSMutableData *output = [NSMutableData dataWithLength:plain.length + EVP_MAX_BLOCK_LENGTH];
+    BOOL success = NO;
+    int length = 0;
+    int finalLength = 0;
+    do {
+        const EVP_CIPHER *algorithm = keyLen == AES_KEY_128_LENGTH ? EVP_aes_128_gcm() : EVP_aes_256_gcm();
+        if (EVP_EncryptInit_ex(ctx, algorithm, NULL, NULL, NULL) != 1) break;
+        if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, (int)initializationVector.length, NULL) != 1) break;
+        if (EVP_EncryptInit_ex(ctx, NULL, NULL, key.bytes, initializationVector.bytes) != 1) break;
+        if (EVP_EncryptUpdate(ctx, output.mutableBytes, &length, plain.bytes, (int)plain.length) != 1) break;
+        if (EVP_EncryptFinal_ex(ctx, (unsigned char *)output.mutableBytes + length, &finalLength) != 1) break;
+        if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_GET_TAG, sizeof(tag), tag) != 1) break;
+        output.length = (NSUInteger)length + (NSUInteger)finalLength;
+        *authenticationTag = [NSData dataWithBytes:tag length:sizeof(tag)];
+        [output appendData:*authenticationTag];
+        *cipher = output;
+        success = YES;
+    } while (NO);
     EVP_CIPHER_CTX_free(ctx);
-    
-    return status; // OpenSSL uses 1 for success
+    return success;
 }
 
 /// Encrypts a file using AES-GCM and appends the authentication tag at the end of the output file.
@@ -985,6 +928,7 @@ cleanup:
 /// @return YES if encryption completes successfully, NO otherwise.
 - (BOOL)encryptFile:(NSString *)fileName fileNameCipher:(NSString *)fileNameCipher key:(NSData *)key keyLen:(int)keyLen initializationVector:(NSData *)initializationVector authenticationTag:(NSData **)authenticationTag
 {
+    if (!authenticationTag || !NCValidGCMParameters(key, keyLen, initializationVector, [NSMutableData dataWithLength:AES_GCM_TAG_LENGTH])) return NO;
     // Select cipher based on key length
     const EVP_CIPHER *cipher = NULL;
     if (keyLen == AES_KEY_128_LENGTH) {
@@ -1062,236 +1006,99 @@ cleanup:
 initializationVector:(NSData *)initializationVector
    authenticationTag:(NSData *)authenticationTag
 {
-    int status = 0;
-
-    // 1. Prepare buffers
-    int len = keyLen;
-    unsigned char cKey[len];
-    bzero(cKey, sizeof(cKey));
-    [key getBytes:cKey length:len];
-
-    len = (int)[initializationVector length];
-    unsigned char cIV[len];
-    bzero(cIV, sizeof(cIV));
-    [initializationVector getBytes:cIV length:len];
-
-    len = (int)[authenticationTag length];
-    unsigned char cTag[len];
-    bzero(cTag, sizeof(cTag));
-    [authenticationTag getBytes:cTag length:len];
-
-    // 2. Create decryption context
-    EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
-    if (!ctx) {
-        NSLog(@"❌ Failed to create EVP_CIPHER_CTX");
-        return NO;
-    }
-
-    // 3. Initialize cipher type (AES-128 or AES-256 GCM)
-    if (keyLen == AES_KEY_128_LENGTH)
-        status = EVP_DecryptInit_ex(ctx, EVP_aes_128_gcm(), NULL, NULL, NULL);
-    else if (keyLen == AES_KEY_256_LENGTH)
-        status = EVP_DecryptInit_ex(ctx, EVP_aes_256_gcm(), NULL, NULL, NULL);
-    else {
-        NSLog(@"❌ Unsupported key length: %d", keyLen);
-        EVP_CIPHER_CTX_free(ctx);
-        return NO;
-    }
-
-    if (status <= 0) {
-        NSLog(@"❌ EVP_DecryptInit_ex failed (cipher type)");
-        EVP_CIPHER_CTX_free(ctx);
-        return NO;
-    }
-
-    // 4. Set IV length
-    status = EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, (int)sizeof(cIV), NULL);
-    if (status <= 0) {
-        NSLog(@"❌ Failed to set IV length");
-        EVP_CIPHER_CTX_free(ctx);
-        return NO;
-    }
-
-    // 5. Set key and IV
-    status = EVP_DecryptInit_ex(ctx, NULL, NULL, cKey, cIV);
-    if (status <= 0) {
-        NSLog(@"❌ EVP_DecryptInit_ex failed (key/IV)");
-        EVP_CIPHER_CTX_free(ctx);
-        return NO;
-    }
-
-    // 6. Decrypt data
-    *plain = [NSMutableData dataWithLength:[cipher length]];
-    int plainLen = 0;
-    unsigned char *cPlain = [*plain mutableBytes];
-    status = EVP_DecryptUpdate(ctx, cPlain, &plainLen, [cipher bytes], (int)[cipher length]);
-    if (status <= 0) {
-        NSLog(@"❌ EVP_DecryptUpdate failed");
-        EVP_CIPHER_CTX_free(ctx);
-        return NO;
-    }
-
-    // 7. Set tag for authentication
-    status = EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_TAG, (int)sizeof(cTag), cTag);
-    if (status <= 0) {
-        NSLog(@"❌ Failed to set authentication tag");
-        EVP_CIPHER_CTX_free(ctx);
-        return NO;
-    }
-
-    // 8. Finalize decryption (important: validates tag)
-    status = EVP_DecryptFinal_ex(ctx, NULL, &plainLen);
-    if (status <= 0) {
-        NSLog(@"❌ GCM authentication failed (tag mismatch or corrupted data)");
-        EVP_CIPHER_CTX_free(ctx);
-        return NO;
-    }
-
-    // 9. Clean up
-    EVP_CIPHER_CTX_free(ctx);
-    return YES;
-}
-
-/// Decrypts a file encrypted with AES-GCM, excluding a trailing authentication tag if present.
-/// This method reads the ciphertext from the specified file, decrypts it using the provided key and IV,
-/// and writes the resulting plaintext to the output file. If the encrypted file contains the provided
-/// authentication tag appended at the end, those bytes are excluded from the decryption process to avoid
-/// producing extra characters in the output.
-///
-/// @param fileName The full path to the input file containing the ciphertext (and optionally the appended tag).
-/// @param fileNamePlain The full path to the output file where the decrypted plaintext will be written.
-/// @param key The AES key as NSData. Length must match the keyLen parameter.
-/// @param keyLen The AES key length in bytes (AES_KEY_128_LENGTH or AES_KEY_256_LENGTH).
-/// @param initializationVector The IV/nonce as NSData, recommended 12 bytes for AES-GCM.
-/// @param authenticationTag The authentication tag as NSData (typically 16 bytes).
-///
-/// @return YES if the file is successfully decrypted and the authentication tag is verified, NO otherwise.
-- (BOOL)decryptFile:(NSString *)fileName fileNamePlain:(NSString *)fileNamePlain key:(NSData *)key keyLen:(int)keyLen initializationVector:(NSData *)initializationVector authenticationTag:(NSData *)authenticationTag {
-    // Validate mandatory parameters
-    if (!fileName || !fileNamePlain || !key || !initializationVector || !authenticationTag) {
-        return NO;
-    }
-
-    // Select cipher based on key length
-    const EVP_CIPHER *cipher = NULL;
-    if (keyLen == AES_KEY_128_LENGTH) {
-        cipher = EVP_aes_128_gcm();
-    } else if (keyLen == AES_KEY_256_LENGTH) {
-        cipher = EVP_aes_256_gcm();
-    } else {
-        return NO;
-    }
-
-    const unsigned char *cKey = key.bytes;
-    const unsigned char *cIV = initializationVector.bytes;
-    const unsigned char *cTag = authenticationTag.bytes;
-    int ivLen = (int)initializationVector.length;
-    int tagLen = (int)authenticationTag.length;
+    if (!plain) return NO;
+    *plain = nil;
+    if (!cipher || cipher.length > INT_MAX || !NCValidGCMParameters(key, keyLen, initializationVector, authenticationTag)) return NO;
 
     EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
     if (!ctx) return NO;
-
+    // Keep unauthenticated plaintext private until finalization succeeds.
+    NSMutableData *candidate = [NSMutableData dataWithLength:cipher.length + EVP_MAX_BLOCK_LENGTH];
     BOOL success = NO;
-    NSInputStream *inStream = nil;
-    NSOutputStream *outStream = nil;
-
+    int length = 0;
+    int finalLength = 0;
     do {
-        // Initialize decryption operation
-        int status = EVP_DecryptInit_ex(ctx, cipher, NULL, NULL, NULL);
-        if (status <= 0) break;
-
-        // Set IV length
-        status = EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, ivLen, NULL);
-        if (status <= 0) break;
-
-        // Set key and IV
-        status = EVP_DecryptInit_ex(ctx, NULL, NULL, cKey, cIV);
-        if (status <= 0) break;
-
-        // Open input and output streams
-        inStream = [NSInputStream inputStreamWithFileAtPath:fileName];
-        outStream = [NSOutputStream outputStreamToFileAtPath:fileNamePlain append:NO];
-        [inStream open];
-        [outStream open];
-
-        if (![inStream hasBytesAvailable] || ![outStream hasSpaceAvailable]) break;
-
-        // Determine ciphertext length, excluding the tag if it is appended to the file
-        unsigned long long fileSize = 0;
-        unsigned long long cipherSize = 0;
-        @autoreleasepool {
-            NSError *attrErr = nil;
-            NSDictionary *attr = [[NSFileManager defaultManager] attributesOfItemAtPath:fileName error:&attrErr];
-            if (attr && !attrErr) {
-                fileSize = [attr fileSize];
-                cipherSize = fileSize;
-
-                // Check if the last bytes match the provided authentication tag
-                if (fileSize >= (unsigned long long)tagLen && tagLen > 0) {
-                    NSFileHandle *fh = [NSFileHandle fileHandleForReadingAtPath:fileName];
-                    if (fh) {
-                        @try {
-                            [fh seekToFileOffset:(fileSize - (unsigned long long)tagLen)];
-                            NSData *tail = [fh readDataOfLength:(NSUInteger)tagLen];
-                            if (tail.length == (NSUInteger)tagLen &&
-                                memcmp(tail.bytes, cTag, (size_t)tagLen) == 0) {
-                                cipherSize = fileSize - (unsigned long long)tagLen; // Exclude the tag from decryption input
-                            }
-                        } @catch (__unused NSException *e) {
-                            // Ignore any file handle error, fallback to using full file
-                        }
-                        [fh closeFile];
-                    }
-                }
-            }
-        }
-        // -------------------------------------------------------------------------------
-
-        unsigned char inBuf[streamBuffer];
-        unsigned char outBuf[streamBuffer];
-        int outLen = 0;
-
-        // Read exactly the ciphertext portion (excluding tag if found)
-        unsigned long long remaining = cipherSize;
-        while (remaining > 0) {
-            NSUInteger toRead = (NSUInteger)MIN((unsigned long long)streamBuffer, remaining);
-            NSInteger bytesRead = [inStream read:inBuf maxLength:toRead];
-            if (bytesRead <= 0) break;
-
-            status = EVP_DecryptUpdate(ctx, outBuf, &outLen, inBuf, (int)bytesRead);
-            if (status <= 0) break;
-
-            NSInteger written = [outStream write:outBuf maxLength:outLen];
-            if (written != outLen) break;
-
-            remaining -= (unsigned long long)bytesRead;
-        }
-
-        if (remaining != 0) break; // Ciphertext not fully processed
-
-        // Set the provided tag before finalizing
-        status = EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_TAG, tagLen, (void *)cTag);
-        if (status <= 0) break;
-
-        // Finalize decryption (verifies tag authenticity)
-        outLen = 0;
-        status = EVP_DecryptFinal_ex(ctx, outBuf, &outLen);
-        if (status <= 0) break;
-
-        if (outLen > 0) {
-            NSInteger written = [outStream write:outBuf maxLength:outLen];
-            if (written != outLen) break;
-        }
-
+        const EVP_CIPHER *algorithm = keyLen == AES_KEY_128_LENGTH ? EVP_aes_128_gcm() : EVP_aes_256_gcm();
+        if (EVP_DecryptInit_ex(ctx, algorithm, NULL, NULL, NULL) != 1) break;
+        if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, (int)initializationVector.length, NULL) != 1) break;
+        if (EVP_DecryptInit_ex(ctx, NULL, NULL, key.bytes, initializationVector.bytes) != 1) break;
+        if (EVP_DecryptUpdate(ctx, candidate.mutableBytes, &length, cipher.bytes, (int)cipher.length) != 1) break;
+        if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_TAG, AES_GCM_TAG_LENGTH, (void *)authenticationTag.bytes) != 1) break;
+        if (EVP_DecryptFinal_ex(ctx, (unsigned char *)candidate.mutableBytes + length, &finalLength) != 1) break;
+        candidate.length = (NSUInteger)length + (NSUInteger)finalLength;
+        *plain = candidate;
         success = YES;
+    } while (NO);
+    if (!success) OPENSSL_cleanse(candidate.mutableBytes, candidate.length);
+    EVP_CIPHER_CTX_free(ctx);
+    return success;
+}
 
+// Decrypt into a private sibling, then atomically publish authenticated plaintext.
+// Supports both older ciphertext-only files and files with an appended 16-byte tag.
+- (BOOL)decryptFile:(NSString *)fileName fileNamePlain:(NSString *)fileNamePlain key:(NSData *)key keyLen:(int)keyLen initializationVector:(NSData *)initializationVector authenticationTag:(NSData *)authenticationTag {
+    if (!fileName.length || !fileNamePlain.length || !NCValidGCMParameters(key, keyLen, initializationVector, authenticationTag)) return NO;
+
+    EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
+    if (!ctx) return NO;
+    FILE *input = NULL;
+    FILE *output = NULL;
+    NSString *temporaryPath = nil;
+    BOOL authenticated = NO;
+    unsigned char inputBuffer[streamBuffer];
+    unsigned char outputBuffer[streamBuffer + EVP_MAX_BLOCK_LENGTH];
+    do {
+        input = fopen(fileName.fileSystemRepresentation, "rb");
+        if (!input) break;
+        struct stat attributes;
+        if (fstat(fileno(input), &attributes) != 0 || !S_ISREG(attributes.st_mode) || attributes.st_size < 0) break;
+        off_t remaining = attributes.st_size;
+        if (remaining >= AES_GCM_TAG_LENGTH) {
+            unsigned char tail[AES_GCM_TAG_LENGTH];
+            if (fseeko(input, remaining - AES_GCM_TAG_LENGTH, SEEK_SET) != 0 || fread(tail, 1, sizeof(tail), input) != sizeof(tail)) break;
+            if (CRYPTO_memcmp(tail, authenticationTag.bytes, sizeof(tail)) == 0) remaining -= AES_GCM_TAG_LENGTH;
+            if (fseeko(input, 0, SEEK_SET) != 0) break;
+        }
+        const EVP_CIPHER *algorithm = keyLen == AES_KEY_128_LENGTH ? EVP_aes_128_gcm() : EVP_aes_256_gcm();
+        if (EVP_DecryptInit_ex(ctx, algorithm, NULL, NULL, NULL) != 1) break;
+        if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, (int)initializationVector.length, NULL) != 1) break;
+        if (EVP_DecryptInit_ex(ctx, NULL, NULL, key.bytes, initializationVector.bytes) != 1) break;
+
+        NSString *template = [[fileNamePlain stringByDeletingLastPathComponent] stringByAppendingPathComponent:@".e2ee-decrypt-XXXXXX"];
+        char *temporaryName = strdup(template.fileSystemRepresentation);
+        if (!temporaryName) break;
+        int descriptor = mkstemp(temporaryName); // Exclusive creation with mode 0600.
+        if (descriptor >= 0) temporaryPath = [[NSFileManager defaultManager] stringWithFileSystemRepresentation:temporaryName length:strlen(temporaryName)];
+        free(temporaryName);
+        if (descriptor < 0) break;
+        output = fdopen(descriptor, "wb");
+        if (!output) { close(descriptor); break; }
+
+        BOOL complete = YES;
+        int length = 0;
+        while (remaining > 0) {
+            size_t count = (size_t)MIN((off_t)sizeof(inputBuffer), remaining);
+            if (fread(inputBuffer, 1, count, input) != count ||
+                EVP_DecryptUpdate(ctx, outputBuffer, &length, inputBuffer, (int)count) != 1 ||
+                fwrite(outputBuffer, 1, (size_t)length, output) != (size_t)length) {
+                complete = NO;
+                break;
+            }
+            remaining -= (off_t)count;
+        }
+        if (!complete || ferror(input)) break;
+        if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_TAG, AES_GCM_TAG_LENGTH, (void *)authenticationTag.bytes) != 1) break;
+        if (EVP_DecryptFinal_ex(ctx, outputBuffer, &length) != 1) break;
+        if (fwrite(outputBuffer, 1, (size_t)length, output) != (size_t)length) break;
+        authenticated = YES;
     } while (NO);
 
-    // Close streams and free context
-    if (inStream) [inStream close];
-    if (outStream) [outStream close];
-    if (ctx) EVP_CIPHER_CTX_free(ctx);
-
+    if (input) fclose(input);
+    if (output && fclose(output) != 0) authenticated = NO;
+    OPENSSL_cleanse(outputBuffer, sizeof(outputBuffer));
+    EVP_CIPHER_CTX_free(ctx);
+    BOOL success = authenticated && rename(temporaryPath.fileSystemRepresentation, fileNamePlain.fileSystemRepresentation) == 0;
+    if (!success && temporaryPath) unlink(temporaryPath.fileSystemRepresentation);
     return success;
 }
 
@@ -1405,46 +1212,43 @@ initializationVector:(NSData *)initializationVector
 
 - (BOOL)verifySignatureCMS:(NSData *)cmsContent data:(NSData *)data certificates:(NSArray*)certificates
 {
-    BIO *dataBIO = BIO_new_mem_buf((void*)data.bytes, (int)data.length);
-    BIO *printBIO = BIO_new_fp(stdout, BIO_NOCLOSE);
+    if (!cmsContent.length || cmsContent.length > INT_MAX || !data || data.length > INT_MAX || !certificates.count) return NO;
+    BIO *dataBIO = BIO_new_mem_buf(data.bytes, (int)data.length);
     BIO *cmsBIO = BIO_new_mem_buf(cmsContent.bytes, (int)cmsContent.length);
-
-    CMS_ContentInfo *contentInfo = d2i_CMS_bio(cmsBIO, NULL);
-    // DEBUG CMS_ContentInfo_print_ctx(printBIO, contentInfo, 0, NULL);
-
-    BOOL verifyResult = CMS_verify(contentInfo, NULL, NULL, dataBIO, NULL, CMS_DETACHED | CMS_NO_SIGNER_CERT_VERIFY);
-
-    BIO_free(dataBIO);
-    BIO_free(printBIO);
-    BIO_free(cmsBIO);
-
-    if (verifyResult) {
-
-        struct stack_st_CMS_SignerInfo* signerInfos = CMS_get0_SignerInfos(contentInfo);
-        STACK_OF(X509) *signers = CMS_get0_signers(contentInfo);
-        int numSigners = sk_X509_num(signers);
-
+    CMS_ContentInfo *contentInfo = cmsBIO ? d2i_CMS_bio(cmsBIO, NULL) : NULL;
+    STACK_OF(X509) *signers = NULL;
+    BOOL trustedSigner = NO;
+    if (dataBIO && contentInfo && CMS_verify(contentInfo, NULL, NULL, dataBIO, NULL, CMS_DETACHED | CMS_NO_SIGNER_CERT_VERIFY) == 1) {
+        // These are the actual certificates used for mathematical signature verification.
+        // Issuer/serial comparison alone does not bind a signature to an expected key.
+        signers = CMS_get0_signers(contentInfo);
         for (NSString *certificate in certificates) {
-
-            const char *ptrCertificate = [certificate cStringUsingEncoding:NSUTF8StringEncoding];
-            BIO *certBio = BIO_new(BIO_s_mem());
-            BIO_write(certBio, ptrCertificate,(unsigned int)strlen(ptrCertificate));
-            X509 *certX509 = PEM_read_bio_X509(certBio, NULL, NULL, NULL);
-            if (!certX509) {
-                continue;
+            if (![certificate isKindOfClass:[NSString class]]) continue;
+            NSData *pem = [certificate dataUsingEncoding:NSUTF8StringEncoding];
+            if (!pem.length || pem.length > INT_MAX) continue;
+            BIO *expectedBIO = BIO_new_mem_buf(pem.bytes, (int)pem.length);
+            X509 *expectedCertificate = expectedBIO ? PEM_read_bio_X509(expectedBIO, NULL, NULL, NULL) : NULL;
+            EVP_PKEY *expectedKey = expectedCertificate ? X509_get_pubkey(expectedCertificate) : NULL;
+            if (!expectedCertificate && expectedBIO) {
+                BIO_reset(expectedBIO);
+                expectedKey = PEM_read_bio_PUBKEY(expectedBIO, NULL, NULL, NULL);
             }
-
-            for (int i = 0; i < numSigners; ++i) {
-                struct CMS_SignerInfo_st *signerInfo = sk_CMS_SignerInfo_value(signerInfos, i);
-                if (CMS_SignerInfo_cert_cmp(signerInfo, certX509) == 0) {
-                    BIO_free(certBio);
-                    return true;
-                }
+            for (int index = 0; expectedKey && index < sk_X509_num(signers); ++index) {
+                EVP_PKEY *signerKey = X509_get_pubkey(sk_X509_value(signers, index));
+                if (signerKey && EVP_PKEY_eq(signerKey, expectedKey) == 1) trustedSigner = YES;
+                EVP_PKEY_free(signerKey);
             }
+            EVP_PKEY_free(expectedKey);
+            X509_free(expectedCertificate);
+            BIO_free(expectedBIO);
+            if (trustedSigner) break;
         }
     }
-
-    return verifyResult;
+    sk_X509_free(signers); // CMS owns the certificates themselves.
+    CMS_ContentInfo_free(contentInfo);
+    BIO_free(dataBIO);
+    BIO_free(cmsBIO);
+    return trustedSigner;
 }
 
 #
@@ -1574,18 +1378,17 @@ initializationVector:(NSData *)initializationVector
 
 - (NSString *)pubKeyToString:(EVP_PKEY *)pubkey
 {
-    char *buf[256];
-    FILE *pFile;
-    NSString *pkey_string;
-    
-    pFile = fmemopen(buf, sizeof(buf), "w");
-    PEM_write_PUBKEY(pFile,pubkey);
-    fputc('\0', pFile);
-    fclose(pFile);
-    
-    pkey_string = [NSString stringWithUTF8String:(char *)buf];
-    
-    return pkey_string;
+    if (!pubkey) return nil;
+    BIO *output = BIO_new(BIO_s_mem());
+    if (!output) return nil;
+    NSString *result = nil;
+    if (PEM_write_bio_PUBKEY(output, pubkey) == 1) {
+        char *bytes = NULL;
+        long length = BIO_get_mem_data(output, &bytes);
+        if (length > 0) result = [[NSString alloc] initWithBytes:bytes length:(NSUInteger)length encoding:NSUTF8StringEncoding];
+    }
+    BIO_free(output);
+    return result;
 }
 
 @end

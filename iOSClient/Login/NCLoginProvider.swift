@@ -186,7 +186,7 @@ class NCLoginProvider: NSObject, ASWebAuthenticationPresentationContextProviding
     /// Start checking the status of the login flow in the background periodically.
     ///
     func startPolling(loginFlowV2Token: String, loginFlowV2Endpoint: String, loginFlowV2Login: String) {
-        nkLog(start: "Starting polling at \(loginFlowV2Endpoint) with token \(loginFlowV2Token)")
+        nkLog(start: "Starting login polling.")
         pollingTask = createPollingTask(token: loginFlowV2Token, endpoint: loginFlowV2Endpoint)
         nkLog(debug: "Polling task created.")
     }
@@ -204,24 +204,24 @@ class NCLoginProvider: NSObject, ASWebAuthenticationPresentationContextProviding
                 }
 
                 guard let urlBase = server else {
-                    nkLog(error: "Login poll response field for server for token \"\(token)\" is nil!")
+                    nkLog(error: "Login poll response is missing the server.")
                     continuation.resume(returning: nil)
                     return
                 }
 
                 guard let user = loginName else {
-                    nkLog(error: "Login poll response field for user name for token \"\(token)\" is nil!")
+                    nkLog(error: "Login poll response is missing the user name.")
                     continuation.resume(returning: nil)
                     return
                 }
 
                 guard let appPassword = appPassword else {
-                    nkLog(error: "Login poll response field for app password for token \"\(token)\" is nil!")
+                    nkLog(error: "Login poll response is missing the app password.")
                     continuation.resume(returning: nil)
                     return
                 }
 
-                nkLog(debug: "Returning login poll response for \"\(user)\" on \"\(urlBase)\" for token \"\(token)\".")
+                nkLog(debug: "Login polling returned a complete grant.")
                 continuation.resume(returning: (urlBase, user, appPassword))
             }
         }
@@ -231,7 +231,7 @@ class NCLoginProvider: NSObject, ASWebAuthenticationPresentationContextProviding
     /// Handle login when polling is successful and access is granted.
     ///
     private func handleGrant(urlBase: String, loginName: String, appPassword: String) async {
-        nkLog(debug: "Handling login grant values for \(loginName) on \(urlBase)")
+        nkLog(debug: "Handling login grant.")
 
         // Cancel the auth session since login was successful
         authSession?.cancel()
@@ -252,7 +252,7 @@ class NCLoginProvider: NSObject, ASWebAuthenticationPresentationContextProviding
         }
 
         await NCAccount().createAccount(viewController: viewController, urlBase: urlBase, user: loginName, password: appPassword, controller: controller)
-        nkLog(debug: "Account creation for \(loginName) on \(urlBase) completed based on login grant values.")
+        nkLog(debug: "Account creation from login grant completed.")
     }
 
     ///
@@ -385,7 +385,7 @@ class NCLoginProviderWebViewFallback: UIViewController, WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-        nkLog(debug: "Web view will allow navigation to \(navigationAction.request.url?.absoluteString ?? "nil")")
+        nkLog(debug: "Login web view will allow navigation.")
         decisionHandler(.allow)
     }
 
@@ -395,7 +395,7 @@ class NCLoginProviderWebViewFallback: UIViewController, WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        nkLog(debug: "Web view did finish navigation to \(webView.url?.absoluteString ?? "nil")")
+        nkLog(debug: "Login web view did finish navigation.")
         NCActivityIndicator.shared.stop()
     }
 }

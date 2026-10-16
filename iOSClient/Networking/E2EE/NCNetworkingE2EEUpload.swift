@@ -126,7 +126,14 @@ class NCNetworkingE2EEUpload: NSObject {
             //
             await self.database.deleteE2eEncryptionAsync(predicate: NSPredicate(format: "account == %@ AND serverUrl == %@ AND fileName == %@", metadata.account, metadata.serverUrl, metadata.fileNameView))
             let object = tableE2eEncryption.init(account: metadata.account, ocIdServerUrl: directory.ocId, fileNameIdentifier: metadata.fileName)
-            if let results = await self.database.getE2eEncryptionAsync(predicate: NSPredicate(format: "account == %@ AND serverUrl == %@", metadata.account, metadata.serverUrl)) {
+            let usableRows: [tableE2eEncryption]
+            do {
+                usableRows = try await database.getUsableE2eEncryptionsAsync(account: metadata.account, serverUrl: metadata.serverUrl, ocIdServerUrl: directory.ocId)
+            } catch {
+                finalError = .invalidData
+                return finalError
+            }
+            if let results = usableRows.first {
                 object.metadataKey = results.metadataKey
                 object.metadataKeyIndex = results.metadataKeyIndex
             } else {
@@ -145,7 +152,12 @@ class NCNetworkingE2EEUpload: NSObject {
             object.mimeType = metadata.contentType
             object.serverUrl = metadata.serverUrl
 
-            await self.database.addE2eEncryptionAsync(object)
+            do {
+                try await self.database.addLocallyGeneratedE2eEncryptionAsync(object)
+            } catch {
+                finalError = .invalidData
+                return finalError
+            }
 
             // UPLOAD METADATA
             //

@@ -59,9 +59,10 @@ extension NCNetworking {
                 } else {
 #if !EXTENSION
                     await NCNetworking.shared.metadataDownloadTranfersSuccess.append(metadata: metadata, etag: etag)
+#else
+                    await downloadSuccess(withMetadata: metadata, etag: etag)
 #endif
                 }
-                await downloadSuccess(withMetadata: metadata, etag: etag)
             } else {
                 await downloadError(withMetadata: metadata, error: error)
             }

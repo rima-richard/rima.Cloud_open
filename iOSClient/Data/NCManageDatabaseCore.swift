@@ -196,6 +196,49 @@ final class NCManageDatabaseCore {
         }
     }
 
+    /// Security policy reads must distinguish an unavailable database from absent state.
+    func performRealmReadThrowingAsync<T>(configuration: Realm.Configuration = .defaultConfiguration, _ block: @escaping (Realm) throws -> T) async throws -> T {
+        try await withCheckedThrowingContinuation { continuation in
+            realmQueue.async(qos: .userInitiated, flags: .enforceQoS) {
+                autoreleasepool {
+                    do {
+                        guard !isSuspendingDatabaseOperation else {
+                            throw NSError(domain: "NCManageDatabase", code: 1, userInfo: [NSLocalizedDescriptionKey: "Database operations are suspended."])
+                        }
+                        let realm = try Realm(configuration: configuration)
+                        continuation.resume(returning: try block(realm))
+                    } catch {
+                        continuation.resume(throwing: error)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Authentication state must only advance after a confirmed transaction commit.
+    /// Unlike the legacy convenience writer, this path reports suspension and failures.
+    func performRealmTransactionAsync(configuration: Realm.Configuration = .defaultConfiguration, _ block: @escaping (Realm) throws -> Void) async throws {
+        guard !isSuspendingDatabaseOperation else {
+            throw NSError(domain: "NCManageDatabase", code: 1, userInfo: [NSLocalizedDescriptionKey: "Database operations are suspended."])
+        }
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            realmQueue.async(qos: .userInitiated, flags: .enforceQoS) {
+                autoreleasepool {
+                    do {
+                        guard !isSuspendingDatabaseOperation else {
+                            throw NSError(domain: "NCManageDatabase", code: 1, userInfo: [NSLocalizedDescriptionKey: "Database operations are suspended."])
+                        }
+                        let realm = try Realm(configuration: configuration)
+                        try realm.write { try block(realm) }
+                        continuation.resume()
+                    } catch {
+                        continuation.resume(throwing: error)
+                    }
+                }
+            }
+        }
+    }
+
     func performRealmWriteAsync(_ block: @escaping (Realm) throws -> Void) async {
         // Skip execution if app is suspending
         guard !isSuspendingDatabaseOperation else {

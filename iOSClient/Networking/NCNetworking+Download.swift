@@ -75,13 +75,15 @@ extension NCNetworking {
         let allHeaderFields = results.response?.response?.allHeaderFields
         let etag = nkComm.normalizedETag(nkComm.findHeader("oc-etag", allHeaderFields: allHeaderFields))
 
+        let completionError: NKError
         if results.nkError == .success {
-            await downloadSuccess(withMetadata: metadata, etag: etag)
+            completionError = await downloadSuccess(withMetadata: metadata, etag: etag)
         } else {
-            await downloadError(withMetadata: metadata, error: results.nkError)
+            completionError = results.nkError
+            await downloadError(withMetadata: metadata, error: completionError)
         }
 
-        return(metadata.account, etag, metadata.date as Date, metadata.size, results.nkError)
+        return(metadata.account, etag, metadata.date as Date, metadata.size, completionError)
     }
 
     // MARK: - Download file in background
@@ -90,7 +92,7 @@ extension NCNetworking {
     func downloadFileInBackground(metadata: tableMetadata,
                                   taskHandler: @escaping (_ task: URLSessionDownloadTask?) -> Void = { _ in },
                                   start: @escaping () -> Void = { }) async -> NKError {
-        let fileNameLocalPath = utilityFileSystem.getDirectoryProviderStorageOcId(metadata.ocId, fileName: metadata.fileNameView, userId: metadata.userId, urlBase: metadata.urlBase)
+        let fileNameLocalPath = utilityFileSystem.getDirectoryProviderStorageOcId(metadata.ocId, fileName: metadata.fileName, userId: metadata.userId, urlBase: metadata.urlBase)
 
         start()
 
@@ -133,21 +135,66 @@ extension NCNetworking {
 
     // MARK: - DOWNLOAD SUCCESS
 
-    func downloadSuccess(withMetadata metadata: tableMetadata, etag: String?) async {
-        nkLog(success: "Downloaded file: " + metadata.serverUrlFileName)
-
+    // Shared by immediate completion and the foreground batch queue.
+    func authenticateDownloadedFile(withMetadata metadata: tableMetadata) async -> NKError {
 #if !EXTENSION
-        if let result = await NCManageDatabase.shared.getE2eEncryptionAsync(predicate: NSPredicate(format: "fileNameIdentifier == %@ AND serverUrl == %@", metadata.fileName, metadata.serverUrl)) {
-            NCEndToEndEncryption.shared().decryptFile(metadata.fileName,
-                                                      fileNameView: metadata.fileNameView,
-                                                      ocId: metadata.ocId,
-                                                      userId: metadata.userId,
-                                                      urlBase: metadata.urlBase,
-                                                      key: result.key,
-                                                      initializationVector: result.initializationVector,
-                                                      authenticationTag: result.authenticationTag)
+        let failure = NKError(errorCode: global.errorE2EEKeyCiphertext,
+                              errorDescription: NSLocalizedString("_e2ee_key_ciphertext_", comment: ""))
+        let encryption = await NCManageDatabase.shared.getE2eEncryptionAsync(
+            predicate: NSPredicate(format: "account == %@ AND fileNameIdentifier == %@ AND serverUrl == %@",
+                                   metadata.account, metadata.fileName, metadata.serverUrl))
+        let requiresV2: Bool
+        do {
+            // Query the persisted folder/ancestor state even when a snapshot removed the file key.
+            requiresV2 = try await NCManageDatabase.shared.requiresE2eeV2Async(
+                account: metadata.account, serverUrl: metadata.serverUrl, ocIdServerUrl: encryption?.ocIdServerUrl ?? "")
+        } catch {
+            await NCManageDatabase.shared.deleteLocalFileAsync(id: metadata.ocId)
+            return failure
+        }
+        let source = utilityFileSystem.getDirectoryProviderStorageOcId(metadata.ocId, fileName: metadata.fileName,
+                                                                      userId: metadata.userId, urlBase: metadata.urlBase)
+        guard Self.authenticateDownloadedFile(at: source, fileNameView: metadata.fileNameView, encryption: encryption,
+                                            requiresV2: requiresV2, encrypted: metadata.e2eEncrypted) else {
+            await NCManageDatabase.shared.deleteLocalFileAsync(id: metadata.ocId)
+            return failure
         }
 #endif
+        return .success
+    }
+
+#if !EXTENSION
+    // Historical V2 rows may contain attacker-selected keys written before signature verification.
+    // Authenticate their provenance before allowing even mathematically valid ciphertext to publish.
+    static func authenticateDownloadedFile(at source: String, fileNameView: String,
+                                           encryption: tableE2eEncryption?, requiresV2: Bool, encrypted: Bool = false) -> Bool {
+        guard (try? NCUtilityFileSystem.validatedFileName(fileNameView)) != nil else { return false }
+        guard let encryption else { return !encrypted && !requiresV2 }
+        let directory = URL(fileURLWithPath: source).deletingLastPathComponent()
+        guard let destination = try? NCUtilityFileSystem.containedFileURL(named: fileNameView, in: directory) else { return false }
+        let version = Double(encryption.version)
+        let isLegacy = version.map { $0 >= 1 && $0 < 2 } ?? false
+        guard encryption.isUsableForE2eeV2 || (!requiresV2 && isLegacy),
+              let key = Data(base64Encoded: encryption.key),
+              let iv = Data(base64Encoded: encryption.initializationVector),
+              let tag = Data(base64Encoded: encryption.authenticationTag) else {
+            return false
+        }
+        return NCEndToEndEncryption.shared().decryptFile(source, fileNamePlain: destination.path,
+                                                        key: key, keyLen: 16, initializationVector: iv,
+                                                        authenticationTag: tag)
+    }
+#endif
+
+    @discardableResult
+    func downloadSuccess(withMetadata metadata: tableMetadata, etag: String?) async -> NKError {
+        let error = await authenticateDownloadedFile(withMetadata: metadata)
+        guard error == .success else {
+            await downloadError(withMetadata: metadata, error: error)
+            return error
+        }
+        nkLog(success: "Downloaded file: " + metadata.serverUrlFileName)
+
         await NCManageDatabase.shared.addLocalFilesAsync(metadatas: [metadata])
 
         await NCManageDatabase.shared.setMetadataSessionAsync(ocId: metadata.ocId,
@@ -167,6 +214,7 @@ extension NCNetworking {
                                     destination: nil,
                                     error: .success)
         }
+        return .success
     }
 
     // MARK: - DOWNLOAD ERROR

@@ -7,6 +7,7 @@ import Foundation
 import UIKit
 import KeychainAccess
 import NextcloudKit
+import CryptoKit
 
 final class NCPreferences: NSObject {
     private static let userDefaultsMigrationKey = "NCPreferencesUserDefaultsMigrationVersion"
@@ -594,6 +595,29 @@ final class NCPreferences: NSObject {
             try? keychain.remove(key)
         }
         try? keychain.remove(archivedEndToEndKeySetIndexKey(account: account))
+        let signerPrefix = endToEndSignerPrefix(account: account)
+        for key in keychain.allKeys().filter({ $0.hasPrefix(signerPrefix) }) {
+            try? keychain.remove(key)
+        }
+    }
+
+    /// Explicit fingerprint approvals are scoped to one account and encrypted root.
+    func getEndToEndApprovedSigners(account: String, rootID: String) throws -> [String] {
+        guard let data = try keychain.getData(endToEndSignerKey(account: account, rootID: rootID)) else { return [] }
+        return try JSONDecoder().decode([String].self, from: data)
+    }
+
+    func setEndToEndApprovedSigners(_ certificates: [String], account: String, rootID: String) throws {
+        let data = try JSONEncoder().encode(certificates)
+        try keychain.set(data, key: endToEndSignerKey(account: account, rootID: rootID))
+    }
+
+    private func endToEndSignerPrefix(account: String) -> String {
+        "EndToEndApprovedSigner_" + SHA256.hash(data: Data(account.utf8)).map { String(format: "%02x", $0) }.joined() + "_"
+    }
+
+    private func endToEndSignerKey(account: String, rootID: String) -> String {
+        endToEndSignerPrefix(account: account) + SHA256.hash(data: Data(rootID.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 
     private func archivedEndToEndKeySetIndexKey(account: String) -> String {

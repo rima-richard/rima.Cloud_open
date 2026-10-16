@@ -9,6 +9,43 @@ class NCEndToEndMetadata: NSObject {
     let utilityFileSystem = NCUtilityFileSystem()
     let database = NCManageDatabase.shared
 
+    enum MetadataFormat: Equatable {
+        case legacyV1, legacyV12, v2
+    }
+
+    /// Codable ignores unknown fields, so classify the envelope before decoding any
+    /// version. Mixed legacy/V2 forms must never select an unsigned decoder.
+    static func metadataFormat(_ data: Data, requiresV2: Bool) throws -> MetadataFormat {
+        guard let envelope = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let metadata = envelope["metadata"] as? [String: Any] else { throw NKError.invalidData }
+        let v1 = metadata["metadataKeys"] != nil
+        let v12 = metadata["metadataKey"] != nil
+        let v2 = envelope["version"] != nil || envelope["users"] != nil
+            || metadata["ciphertext"] != nil || metadata["nonce"] != nil || metadata["authenticationTag"] != nil
+        guard [v1, v12, v2].filter({ $0 }).count == 1 else { throw NKError.invalidData }
+        if v2 {
+            guard envelope["files"] == nil, metadata["version"] == nil else { throw NKError.invalidData }
+            let decoded = try JSONDecoder().decode(E2eeV2.self, from: data)
+            guard decoded.version == "2" || decoded.version.hasPrefix("2.") else { throw NKError.invalidData }
+            return .v2
+        }
+        guard !requiresV2 else { throw NCManageDatabase.E2eeStateError.versionDowngrade }
+        if v1 {
+            let decoded = try JSONDecoder().decode(E2eeV1.self, from: data)
+            guard decoded.metadata.version >= 1, decoded.metadata.version < 2 else { throw NKError.invalidData }
+            return .legacyV1
+        }
+        let decoded = try JSONDecoder().decode(E2eeV12.self, from: data)
+        guard decoded.metadata.version >= 1, decoded.metadata.version < 2 else { throw NKError.invalidData }
+        return .legacyV12
+    }
+
+    static func encodingFormat(version: String, requiresV2: Bool) throws -> MetadataFormat {
+        if version == "2" || version.hasPrefix("2.") { return .v2 }
+        guard version.hasPrefix("1."), !requiresV2 else { throw NCManageDatabase.E2eeStateError.versionDowngrade }
+        return .legacyV12
+    }
+
     // --------------------------------------------------------------------------------------------
     // MARK: Encode JSON Metadata Bridge
     // --------------------------------------------------------------------------------------------
@@ -21,12 +58,16 @@ class NCEndToEndMetadata: NSObject {
         }
         let capabilities = await NKCapabilities.shared.getCapabilities(for: session.account)
 
-        if capabilities.e2EEApiVersion.hasPrefix("1.") {
-            return await encodeMetadataV1(account: session.account, serverUrl: serverUrl, ocIdServerUrl: directory.ocId)
-        } else if capabilities.e2EEApiVersion.hasPrefix("2.") {
-            return await encodeMetadataV2(serverUrl: serverUrl, ocIdServerUrl: directory.ocId, addUserId: addUserId, addCertificate: addCertificate, removeUserId: removeUserId, session: session)
-        } else {
-            return (nil, nil, 0, NKError(errorCode: NCGlobal.shared.errorE2EEVersion, errorDescription: "Server E2EE version " + capabilities.e2EEApiVersion + ", not compatible"))
+        do {
+            let requiresV2 = try await database.requiresE2eeV2Async(account: session.account, serverUrl: serverUrl, ocIdServerUrl: directory.ocId)
+            switch try Self.encodingFormat(version: capabilities.e2EEApiVersion, requiresV2: requiresV2) {
+            case .legacyV1, .legacyV12:
+                return await encodeMetadataV1(account: session.account, serverUrl: serverUrl, ocIdServerUrl: directory.ocId)
+            case .v2:
+                return await encodeMetadataV2(serverUrl: serverUrl, ocIdServerUrl: directory.ocId, addUserId: addUserId, addCertificate: addCertificate, removeUserId: removeUserId, session: session)
+            }
+        } catch {
+            return (nil, nil, 0, NKError(errorCode: NCGlobal.shared.errorE2EEVersion, errorDescription: "An encrypted folder cannot downgrade its metadata version."))
         }
     }
 
@@ -47,19 +88,12 @@ class NCEndToEndMetadata: NSObject {
             )
         }
 
-        let isMetadataV1 = (try? JSONDecoder().decode(E2eeV1.self, from: data)) != nil
-        let isMetadataV12 = (try? JSONDecoder().decode(E2eeV12.self, from: data)) != nil
-        let metadataV2 = try? JSONDecoder().decode(E2eeV2.self, from: data)
-        let isMetadataV2 = metadataV2 != nil
-
-        guard isMetadataV1 || isMetadataV12 || isMetadataV2 else {
-            return (
-                NKError(
-                    errorCode: NCGlobal.shared.errorE2EEVersion,
-                    errorDescription: "Unable to decode the metadata file"
-                ),
-                .unavailable
-            )
+        let format: MetadataFormat
+        do {
+            let requiresV2 = try await database.requiresE2eeV2Async(account: session.account, serverUrl: serverUrl, ocIdServerUrl: directory.ocId)
+            format = try Self.metadataFormat(data, requiresV2: requiresV2)
+        } catch {
+            return (NKError(errorCode: NCGlobal.shared.errorE2EEVersion, errorDescription: "Invalid or downgraded encrypted metadata."), .unavailable)
         }
 
         let access: NCEndToEndKeySetAccess
@@ -92,7 +126,7 @@ class NCEndToEndMetadata: NSObject {
         }
 
         let error: NKError
-        if isMetadataV1 {
+        if format == .legacyV1 {
             error = await decodeMetadataV1(
                 metadata,
                 serverUrl: serverUrl,
@@ -100,7 +134,7 @@ class NCEndToEndMetadata: NSObject {
                 session: session,
                 keySet: keySet
             )
-        } else if isMetadataV12 {
+        } else if format == .legacyV12 {
             error = await decodeMetadataV12(
                 metadata,
                 serverUrl: serverUrl,
@@ -127,6 +161,10 @@ class NCEndToEndMetadata: NSObject {
         serverUrl: String,
         session: NCSession.Session
     ) async throws -> NCEndToEndKeySetAccess {
+        guard let data = metadata.data(using: .utf8),
+              let directory = await database.getTableDirectoryAsync(predicate: NSPredicate(format: "account == %@ AND serverUrl == %@", session.account, serverUrl)) else { throw NKError.invalidData }
+        let requiresV2 = try await database.requiresE2eeV2Async(account: session.account, serverUrl: serverUrl, ocIdServerUrl: directory.ocId)
+        _ = try Self.metadataFormat(data, requiresV2: requiresV2)
         var childRootEncryptedMetadataKey: String?
         if let data = metadata.data(using: .utf8),
            let metadataV2 = try? JSONDecoder().decode(E2eeV2.self, from: data),
@@ -179,7 +217,7 @@ class NCEndToEndMetadata: NSObject {
             account: session.account,
             directoryTopOcId: directoryTop.ocId,
             userId: session.userId
-        ) else {
+        ), tableUser.authenticated else {
             return nil
         }
 

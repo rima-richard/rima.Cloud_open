@@ -9,7 +9,7 @@ SPDX-License-Identifier: GPL-3.0-or-later
 Angepasster iPhone-Client der rima Pflege GmbH auf Grundlage der
 [offiziellen Nextcloud-iOS-App](https://github.com/nextcloud/ios).
 
-Dieser Quellstand gehört zu **Version 1.0.0, Build 26**. Er basiert auf
+Dieser Quellstand gehört zu **Version 1.0.0, Build 27**. Er basiert auf
 Nextcloud iOS **35.1.0**, Commit
 `dc214c4c92125da009bf9581b83462d4ba36d5fb`.
 
@@ -46,17 +46,27 @@ Der Programmcode steht unter [GPL-3.0-or-later](LICENSE.txt) mit der
 stehen in `LICENSES/`, `REUSE.toml` und den Danksagungen der App.
 Marken und Grafiken behalten ihre gesonderten Rechtehinweise.
 
-Der Tag `v1.0.0-build26` bezeichnet den zu Build26 gehörenden Quellstand.
+Der Tag `v1.0.0-build27` bezeichnet den zu Build27 gehörenden Quellstand.
 GitHub stellt über **Code → Download ZIP** auch ein Quellarchiv bereit.
 Die Website-Service-Seite kann auf dieses Repository bzw. den passenden
 Release-Tag verweisen. Ein App-Installationslink wird hier nicht beworben.
 
 ## Stand der Bereitstellung
 
-Build26 ersetzt den bisherigen Upstream-Link in den App-Einstellungen
-durch dieses Quellcode-Repository. Er wurde lokal im Simulator geprüft,
-archiviert und signiert exportiert; bei Apple wurde er nicht hochgeladen.
-Build26 ist außerdem auf dem freigegebenen iPhone17Pro installiert und gestartet.
+Build27 enthält Sicherheitskorrekturen für E2EE-Authentifizierung,
+Empfängerzustand und Replay-Zähler, sichere Dokumentexporte und
+Teilen-Dateinamen sowie bereinigte Login-Protokolle. Bei erstmals geöffneten
+E2EE-Freigaben eines unbekannten Schlüssels ist ein Fingerabdruck-Abgleich
+über einen unabhängigen Kanal erforderlich. Der eigene Fingerabdruck ist
+in den E2EE-Einstellungen sichtbar. Normale Cloud-Ordner benötigen diesen
+Abgleich nicht. Die Bestätigung gilt nur für das Konto und den verschlüsselten
+Stammordner; lokale E2EE-Entfernung löscht auch diese Bestätigungen.
+
+Der Simulator-Build und 153 lokale Unit-Tests in 20 Testsuiten sind
+erfolgreich geprüft. Der Stilcheck der geänderten Swift-Dateien ist bestanden.
+Es erfolgt kein Upload dieses Builds zu Apple. Die enthaltenen Kryptografie-Testschlüssel sind ausschließlich
+synthetische Testdaten und dürfen niemals produktiv verwendet werden.
+
 Build25 wurde zuvor im Simulator geprüft, auf
 dem iPhone17Pro installiert und bei App Store Connect hochgeladen.
 Die App ist noch nicht zur App-Prüfung eingereicht und nicht veröffentlicht.

@@ -83,6 +83,21 @@ struct NCManageE2EEView: View {
                             }
                         }
                     }
+                    if let certificate = NCPreferences().getEndToEndCertificate(account: model.session.account),
+                       let fingerprint = NCEndToEndSignerTrust.fingerprint(certificate: certificate) {
+                        Section {
+                            Text(fingerprint)
+                                .font(.system(.footnote, design: .monospaced))
+                                .textSelection(.enabled)
+                            Button(NSLocalizedString("_copy_", comment: "")) {
+                                UIPasteboard.general.string = fingerprint
+                            }
+                        } header: {
+                            Text(NSLocalizedString("_e2ee_fingerprint_own_", comment: ""))
+                        } footer: {
+                            Text(NSLocalizedString("_e2ee_fingerprint_share_", comment: ""))
+                        }
+                    }
 #if DEBUG
                     if let certificateValidity = model.certificateValidity {
                         Section {

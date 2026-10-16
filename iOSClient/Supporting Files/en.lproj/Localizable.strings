@@ -864,3 +864,10 @@
 "_autoupload_force_reupload_footer_" = "Previous upload records are ignored for photos and videos in the selected library or date range. New completed uploads are still recorded. This option stays enabled until you turn it off.";
 
 "_auto_upload_active_" = "Automatic photo and video upload active";
+
+// rima.Cloud: explicit shared-folder signer verification
+"_e2ee_fingerprint_verify_" = "Verify shared-folder key";
+"_e2ee_fingerprint_compare_" = "Compare this complete fingerprint with the sender using a separate trusted channel, such as a phone call. The account name below is not yet verified. Only confirm if every character matches. Cancel if you cannot verify it.";
+"_e2ee_fingerprint_matches_" = "Fingerprint matches";
+"_e2ee_fingerprint_own_" = "My E2EE key fingerprint (SHA-256)";
+"_e2ee_fingerprint_share_" = "When sharing an encrypted folder, give the recipient this fingerprint through a separate trusted channel so they can verify your key.";

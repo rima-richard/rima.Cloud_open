@@ -1099,6 +1099,14 @@
 		F7FF2CB12842159500EBB7A1 /* NCSectionHeader.xib in Resources */ = {isa = PBXBuildFile; fileRef = F7FF2CB02842159500EBB7A1 /* NCSectionHeader.xib */; };
 		F7FFFCA02FB300440015441E /* NCAssistantSharedTextStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7FFFC9D2FB300440015441E /* NCAssistantSharedTextStore.swift */; };
 		F7FFFCA22FB300600015441E /* NCAssistantSharedTextStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7FFFC9D2FB300440015441E /* NCAssistantSharedTextStore.swift */; };
+		469E5E5DD223495A9C45C6FA /* NCEndToEndSignerTrust.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98D5A4A7201947EAA8AEB951 /* NCEndToEndSignerTrust.swift */; };
+		23BE197C9C2D477797D03B9F /* NCEndToEndSignerTrust.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98D5A4A7201947EAA8AEB951 /* NCEndToEndSignerTrust.swift */; };
+		49B1B25AB9334C268C55C3BD /* NCEndToEndSignerTrustTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 705AAC73874246D9B223418F /* NCEndToEndSignerTrustTests.swift */; };
+		01AFBFF3A8D143CF9925AA6F /* NCEndToEndEncryptionSecurityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32FEDC1E6F334B91B6BA7931 /* NCEndToEndEncryptionSecurityTests.swift */; };
+		B9751D4025D84D02AEF92C8C /* NCEndToEndSecurityFixtures.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4825C6C0D414D4B9CB3EF3B /* NCEndToEndSecurityFixtures.swift */; };
+		7AFD8582148A46DA8A8610ED /* NCSafeFileDestinationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92873B32E6FC4D9F8A5165B5 /* NCSafeFileDestinationTests.swift */; };
+		6204C8B004EF45F7BA063E11 /* NCRichDocumentsJavaScriptTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B58F821573C04C9696EE791C /* NCRichDocumentsJavaScriptTests.swift */; };
+		0181548102154D2B91FAF576 /* NCEndToEndMetadataStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6967ABD08E74B3CB8DE8F19 /* NCEndToEndMetadataStateTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -2134,6 +2142,13 @@
 		F7FDFF592E437E55000D7688 /* NCAccount.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NCAccount.swift; sourceTree = "<group>"; };
 		F7FF2CB02842159500EBB7A1 /* NCSectionHeader.xib */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.xib; path = NCSectionHeader.xib; sourceTree = "<group>"; };
 		F7FFFC9D2FB300440015441E /* NCAssistantSharedTextStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NCAssistantSharedTextStore.swift; sourceTree = "<group>"; };
+		98D5A4A7201947EAA8AEB951 /* NCEndToEndSignerTrust.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NCEndToEndSignerTrust.swift; sourceTree = "<group>"; };
+		705AAC73874246D9B223418F /* NCEndToEndSignerTrustTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NCEndToEndSignerTrustTests.swift; sourceTree = "<group>"; };
+		32FEDC1E6F334B91B6BA7931 /* NCEndToEndEncryptionSecurityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NCEndToEndEncryptionSecurityTests.swift; sourceTree = "<group>"; };
+		D4825C6C0D414D4B9CB3EF3B /* NCEndToEndSecurityFixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NCEndToEndSecurityFixtures.swift; sourceTree = "<group>"; };
+		92873B32E6FC4D9F8A5165B5 /* NCSafeFileDestinationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NCSafeFileDestinationTests.swift; sourceTree = "<group>"; };
+		B58F821573C04C9696EE791C /* NCRichDocumentsJavaScriptTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NCRichDocumentsJavaScriptTests.swift; sourceTree = "<group>"; };
+		F6967ABD08E74B3CB8DE8F19 /* NCEndToEndMetadataStateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NCEndToEndMetadataStateTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -2359,7 +2374,13 @@
 				C0DEDA7E30C1000100A00001 /* NCAutoUploadDateTests.swift */,
 				F76BED7B306D0000002E1442 /* NCPhotoLibraryAssetTests.swift */,
 				A1E2EE010000000000000009 /* NCEndToEndKeySetArchiveTests.swift */,
+				F6967ABD08E74B3CB8DE8F19 /* NCEndToEndMetadataStateTests.swift */,
 				A1E2EE020000000000000007 /* NCEndToEndKeySetResolverTests.swift */,
+				B58F821573C04C9696EE791C /* NCRichDocumentsJavaScriptTests.swift */,
+				92873B32E6FC4D9F8A5165B5 /* NCSafeFileDestinationTests.swift */,
+				D4825C6C0D414D4B9CB3EF3B /* NCEndToEndSecurityFixtures.swift */,
+				32FEDC1E6F334B91B6BA7931 /* NCEndToEndEncryptionSecurityTests.swift */,
+				705AAC73874246D9B223418F /* NCEndToEndSignerTrustTests.swift */,
 				C10D000230C1000100A00015 /* NCRimaNavigationTests.swift */,
 				AABBCC0330A8000100F0A001 /* NCMediaPlaybackOptionsTests.swift */,
 				AABBCC0730A8000100F0A001 /* NCVideoPlaybackPresentationContextTests.swift */,
@@ -3577,6 +3598,7 @@
 				A1E2EE020000000000000002 /* NCEndToEndKeySetResolver.swift */,
 				F7F878AD1FB9E3B900599E4F /* NCEndToEndMetadata.swift */,
 				F72944F12A84246400246839 /* NCEndToEndMetadataV2.swift */,
+				98D5A4A7201947EAA8AEB951 /* NCEndToEndSignerTrust.swift */,
 				F72944F42A8424F800246839 /* NCEndToEndMetadataV1.swift */,
 				F785EE9C246196DF00B3F945 /* NCNetworkingE2EE.swift */,
 				F7C30DF9291BCF790017149B /* NCNetworkingE2EECreateFolder.swift */,
@@ -4774,7 +4796,13 @@
 				C0DEDA7E30C1000100A00002 /* NCAutoUploadDateTests.swift in Sources */,
 				F76BED7E306D0000002E1442 /* NCPhotoLibraryAssetTests.swift in Sources */,
 				A1E2EE01000000000000000A /* NCEndToEndKeySetArchiveTests.swift in Sources */,
+				0181548102154D2B91FAF576 /* NCEndToEndMetadataStateTests.swift in Sources */,
 				A1E2EE020000000000000008 /* NCEndToEndKeySetResolverTests.swift in Sources */,
+				6204C8B004EF45F7BA063E11 /* NCRichDocumentsJavaScriptTests.swift in Sources */,
+				7AFD8582148A46DA8A8610ED /* NCSafeFileDestinationTests.swift in Sources */,
+				B9751D4025D84D02AEF92C8C /* NCEndToEndSecurityFixtures.swift in Sources */,
+				01AFBFF3A8D143CF9925AA6F /* NCEndToEndEncryptionSecurityTests.swift in Sources */,
+				49B1B25AB9334C268C55C3BD /* NCEndToEndSignerTrustTests.swift in Sources */,
 				C10D000130C1000100A00015 /* NCRimaNavigationTests.swift in Sources */,
 				AABBCC0430A8000100F0A001 /* NCMediaPlaybackOptionsTests.swift in Sources */,
 				AABBCC0830A8000100F0A001 /* NCVideoPlaybackPresentationContextTests.swift in Sources */,
@@ -4998,6 +5026,7 @@
 				F71FA7992F3508C600E86192 /* NCNetworking+WebDAV.swift in Sources */,
 				F76B3CCF1EAE01BD00921AC9 /* NCBrand.swift in Sources */,
 				F72944F32A84246400246839 /* NCEndToEndMetadataV2.swift in Sources */,
+				23BE197C9C2D477797D03B9F /* NCEndToEndSignerTrust.swift in Sources */,
 				F7BAADCC1ED5A87C00B7EAD4 /* NCManageDatabase.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -5348,6 +5377,7 @@
 				F7501C332212E57500FB1415 /* NCMedia.swift in Sources */,
 				F7411C552D7B26D700F57358 /* NCNetworking+ServerError.swift in Sources */,
 				F72944F22A84246400246839 /* NCEndToEndMetadataV2.swift in Sources */,
+				469E5E5DD223495A9C45C6FA /* NCEndToEndSignerTrust.swift in Sources */,
 				F78026122E9CFA6300B63436 /* NCTransfersModel.swift in Sources */,
 				F7EF2AEB2E43157B0081B2C9 /* NCNotification.swift in Sources */,
 				F70BFC7420E0FA7D00C67599 /* NCUtility.swift in Sources */,
@@ -6721,7 +6751,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 26;
+				CURRENT_PROJECT_VERSION = 27;
 				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				CODE_SIGN_STYLE = Automatic;
@@ -6790,7 +6820,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 26;
+				CURRENT_PROJECT_VERSION = 27;
 				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				CODE_SIGN_STYLE = Automatic;

@@ -124,11 +124,10 @@ class NCFilesExtensionHandler {
 
     // Image
     func getItem(image: UIImage, fileName: String) -> String? {
-        var fileUrl = URL(fileURLWithPath: NSTemporaryDirectory() + fileName)
-        if fileUrl.pathExtension.isEmpty { fileUrl.appendPathExtension("png") }
-        guard let pngImageData = image.pngData(), (try? pngImageData.write(to: fileUrl, options: [.atomic])) != nil
-        else { return nil }
-        return fileUrl.lastPathComponent
+        guard (try? NCUtilityFileSystem.validatedFileName(fileName)) != nil,
+              let pngImageData = image.pngData() else { return nil }
+        let name = (fileName as NSString).pathExtension.isEmpty ? fileName + ".png" : fileName
+        return try? NCUtilityFileSystem.writeSharedFile(pngImageData, named: name)
     }
 
     // URL
@@ -139,27 +138,12 @@ class NCFilesExtensionHandler {
             guard !fileNames.contains(url.lastPathComponent) else { return nil }
             if !url.deletingPathExtension().lastPathComponent.isEmpty { fileName = url.deletingPathExtension().lastPathComponent }
             fileName += "." + (url.pathExtension.isEmpty ? "html" : url.pathExtension)
-            let filenamePath = NSTemporaryDirectory() + fileName
-
             do {
                 let downloadedContent = try Data(contentsOf: url)
-                guard !FileManager.default.fileExists(atPath: filenamePath) else { return nil }
-                try downloadedContent.write(to: URL(fileURLWithPath: filenamePath))
+                return try NCUtilityFileSystem.writeSharedFile(downloadedContent, named: fileName)
             } catch { print(error); return nil }
-            return fileName
         }
-
-        let filenamePath = NSTemporaryDirectory() + fileName
-
-        try? FileManager.default.removeItem(atPath: filenamePath)
-
-        do {
-            try FileManager.default.copyItem(atPath: url.path, toPath: filenamePath)
-
-            let attr = try FileManager.default.attributesOfItem(atPath: filenamePath)
-            guard !attr.isEmpty else { return nil }
-            return fileName
-        } catch { return nil }
+        return try? NCUtilityFileSystem.copySharedFile(from: url, named: fileName)
     }
 
     // Data
@@ -167,13 +151,15 @@ class NCFilesExtensionHandler {
         guard !data.isEmpty else { return nil }
         var fileName = fileName
 
-        if let url = URL(string: fileName), !url.pathExtension.isEmpty {
-            fileName = url.lastPathComponent
-        } else if let name = provider.suggestedName {
-            fileName = name
-        } else if let ext = provider.registeredTypeIdentifiers.last?.split(separator: ".").last {
-            fileName += "." + ext
-        } // else: no file information, use default name without ext
+        guard (try? NCUtilityFileSystem.validatedFileName(fileName)) != nil else { return nil }
+        if (fileName as NSString).pathExtension.isEmpty {
+            if let name = provider.suggestedName {
+                fileName = name
+            } else if let ext = provider.registeredTypeIdentifiers.last?.split(separator: ".").last {
+                fileName += "." + ext
+            } // else: no file information, use default name without ext
+        }
+        guard (try? NCUtilityFileSystem.validatedFileName(fileName)) != nil else { return nil }
 
         // when sharing images in safari only data is retuned.
         // also, when sharing option "Automatic" is slected extension will return both raw data and a url, which will be downloaded, causing the image to appear twice with different names
@@ -181,17 +167,14 @@ class NCFilesExtensionHandler {
             return getItem(image: image, fileName: fileName)
         }
 
-        let filenamePath = NSTemporaryDirectory() + fileName
-        FileManager.default.createFile(atPath: filenamePath, contents: data, attributes: nil)
-        return fileName
+        return try? NCUtilityFileSystem.writeSharedFile(data, named: fileName)
     }
 
     // String
     func getItem(string: String, fileName: String) -> String? {
-        guard !string.isEmpty else { return nil }
-        let filenamePath = NSTemporaryDirectory() + fileName + ".txt"
-        FileManager.default.createFile(atPath: filenamePath, contents: string.data(using: String.Encoding.utf8), attributes: nil)
-        return fileName
+        guard !string.isEmpty,
+              (try? NCUtilityFileSystem.validatedFileName(fileName)) != nil else { return nil }
+        return try? NCUtilityFileSystem.writeSharedFile(Data(string.utf8), named: fileName + ".txt")
     }
 }
 

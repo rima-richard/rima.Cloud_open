@@ -49,6 +49,174 @@ final class NCUtilityFileSystem: NSObject, @unchecked Sendable {
 
     // MARK: -
 
+    /// File-system names are literal basenames. Percent decoding belongs to the
+    /// protocol parser (for example filename*), never to this file-system boundary.
+    static func validatedFileName(_ name: String) throws -> String {
+        guard !name.isEmpty, name != ".", name != "..",
+              !name.contains("/"), !name.contains("\\"),
+              name.rangeOfCharacter(from: .controlCharacters) == nil else {
+            throw CocoaError(.fileWriteInvalidFileName)
+        }
+        return name
+    }
+
+    static func containedFileURL(named name: String, in directory: URL) throws -> URL {
+        _ = try validatedFileName(name)
+        let root = directory.standardizedFileURL.resolvingSymlinksInPath()
+        guard root.isFileURL,
+              try root.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true else {
+            throw CocoaError(.fileWriteInvalidFileName)
+        }
+        let destination = root.appendingPathComponent(name, isDirectory: false).standardizedFileURL
+        guard destination.deletingLastPathComponent().path == root.path,
+              destination.resolvingSymlinksInPath().path == destination.path else {
+            throw CocoaError(.fileWriteInvalidFileName)
+        }
+        return destination
+    }
+
+    /// Each download receives a new private directory before any network write.
+    static func createDocumentExportURL(fileName: String, in directory: URL) throws -> URL {
+        _ = try validatedFileName(fileName)
+        let name = try validatedFileName((fileName as NSString).deletingPathExtension)
+        let folder = try containedFileURL(named: "document-export-" + UUID().uuidString, in: directory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false,
+                                                attributes: [.posixPermissions: 0o700])
+        do {
+            return try containedFileURL(named: name, in: folder)
+        } catch {
+            try? FileManager.default.removeItem(at: folder)
+            throw error
+        }
+    }
+
+    /// Rename only inside the export's private directory; never replace an item.
+    static func finishDocumentExport(at source: URL, contentDisposition: String?) throws -> URL {
+        let directory = source.deletingLastPathComponent()
+        guard try containedFileURL(named: source.lastPathComponent, in: directory) == source,
+              try source.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]).isRegularFile == true,
+              try source.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink != true else {
+            throw CocoaError(.fileReadInvalidFileName)
+        }
+        guard let contentDisposition,
+              let name = try filenameFromContentDisposition(contentDisposition) else { return source }
+        let destination = try containedFileURL(named: name, in: directory)
+        if destination == source { return source }
+        try FileManager.default.moveItem(at: source, to: destination)
+        return destination
+    }
+
+    /// Parse quoted HTTP parameters before validating the selected basename.
+    /// filename* is percent decoded exactly once, as required by its wire format.
+    static func filenameFromContentDisposition(_ disposition: String) throws -> String? {
+        var fields: [String] = []
+        var field = ""
+        var quoted = false
+        var escaped = false
+        for character in disposition {
+            if escaped {
+                field.append(character)
+                escaped = false
+            } else if quoted && character == "\\" {
+                field.append(character)
+                escaped = true
+            } else if character == "\"" {
+                field.append(character)
+                quoted.toggle()
+            } else if character == ";" && !quoted {
+                fields.append(field)
+                field = ""
+            } else {
+                field.append(character)
+            }
+        }
+        guard !quoted, !escaped else { throw CocoaError(.fileWriteInvalidFileName) }
+        fields.append(field)
+        var names: [String: String] = [:]
+        for parameter in fields.dropFirst() {
+            guard let separator = parameter.firstIndex(of: "=") else { continue }
+            let key = parameter[..<separator].trimmingCharacters(in: .whitespaces).lowercased()
+            guard key == "filename" || key == "filename*" else { continue }
+            guard names[key] == nil else { throw CocoaError(.fileWriteInvalidFileName) }
+            var value = parameter[parameter.index(after: separator)...].trimmingCharacters(in: .whitespaces)
+            if value.hasPrefix("\"") {
+                guard value.hasSuffix("\""), value.count >= 2 else { throw CocoaError(.fileWriteInvalidFileName) }
+                value = String(value.dropFirst().dropLast())
+                // Only the quoted-pair forms for a quote or backslash are accepted.
+                var decoded = ""
+                var escaping = false
+                for character in value {
+                    if escaping {
+                        guard character == "\\" || character == "\"" else { throw CocoaError(.fileWriteInvalidFileName) }
+                        decoded.append(character)
+                        escaping = false
+                    } else if character == "\\" {
+                        escaping = true
+                    } else {
+                        guard character != "\"" else { throw CocoaError(.fileWriteInvalidFileName) }
+                        decoded.append(character)
+                    }
+                }
+                guard !escaping else { throw CocoaError(.fileWriteInvalidFileName) }
+                value = decoded
+            } else if value.contains("\"") {
+                throw CocoaError(.fileWriteInvalidFileName)
+            }
+            if key == "filename*" {
+                let parts = value.split(separator: "'", maxSplits: 2, omittingEmptySubsequences: false)
+                guard parts.count == 3, parts[0].lowercased() == "utf-8",
+                      let decoded = String(parts[2]).removingPercentEncoding else {
+                    throw CocoaError(.fileWriteInvalidFileName)
+                }
+                value = decoded
+            }
+            names[key] = try validatedFileName(value)
+        }
+        return names["filename*"] ?? names["filename"]
+    }
+
+    /// The share consumer expects a basename directly inside its temporary root.
+    /// Exclusive creation also protects an existing file or dangling symlink.
+    static func writeSharedFile(_ data: Data, named name: String, in directory: URL = FileManager.default.temporaryDirectory) throws -> String {
+        try createSharedFile(named: name, in: directory) { destination in
+            try data.write(to: destination, options: .withoutOverwriting)
+        }
+    }
+
+    static func copySharedFile(from source: URL, named name: String, in directory: URL = FileManager.default.temporaryDirectory) throws -> String {
+        let source = source.resolvingSymlinksInPath()
+        guard try source.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true else {
+            throw CocoaError(.fileReadUnsupportedScheme)
+        }
+        return try createSharedFile(named: name, in: directory) { destination in
+            try FileManager.default.copyItem(at: source, to: destination)
+        }
+    }
+
+    private static func createSharedFile(named name: String, in directory: URL, write: (URL) throws -> Void) throws -> String {
+        _ = try validatedFileName(name)
+        let pathExtension = (name as NSString).pathExtension
+        let stem = (name as NSString).deletingPathExtension
+        var candidate = name
+        for _ in 0..<10 {
+            // Check before resolving so that existing and dangling links are
+            // treated as collisions, never followed or removed.
+            let root = directory.standardizedFileURL.resolvingSymlinksInPath()
+            let path = root.appendingPathComponent(candidate).path
+            if (try? FileManager.default.attributesOfItem(atPath: path)) == nil {
+                let destination = try containedFileURL(named: candidate, in: root)
+                do {
+                    try write(destination)
+                    return candidate
+                } catch let error as CocoaError where error.code == .fileWriteFileExists {
+                    // Another provider may have written this name concurrently.
+                }
+            }
+            candidate = stem + " " + UUID().uuidString + (pathExtension.isEmpty ? "" : "." + pathExtension)
+        }
+        throw CocoaError(.fileWriteFileExists)
+    }
+
     func getPathDomain(userId: String, host: String) -> String {
         let path = "\(userId)-\(host)"
             .replacingOccurrences(of: " ", with: "-")

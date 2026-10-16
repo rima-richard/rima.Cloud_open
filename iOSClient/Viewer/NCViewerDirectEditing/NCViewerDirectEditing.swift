@@ -383,12 +383,6 @@ final class NCViewerDirectEditing: UIViewController, WKNavigationDelegate, WKScr
             return
         }
 
-        var fileName = (metadata.fileName as NSString).deletingPathExtension
-        let fileNameLocalPath = utilityFileSystem.createServerUrl(
-            serverUrl: utilityFileSystem.directoryUserData,
-            fileName: fileName
-        )
-
         if type == "slideshow" {
             guard let browserWebViewController = UIStoryboard(name: "NCBrowserWeb", bundle: nil).instantiateInitialViewController() as? NCBrowserWeb else {
                 return
@@ -400,10 +394,21 @@ final class NCViewerDirectEditing: UIViewController, WKNavigationDelegate, WKScr
             return
         }
 
+        let downloadURL: URL
+        do {
+            guard !utilityFileSystem.directoryUserData.isEmpty else { throw CocoaError(.fileWriteInvalidFileName) }
+            downloadURL = try NCUtilityFileSystem.createDocumentExportURL(
+                fileName: metadata.fileName,
+                in: URL(fileURLWithPath: utilityFileSystem.directoryUserData, isDirectory: true)
+            )
+        } catch {
+            showDocumentExportError(error)
+            return
+        }
         NCActivityIndicator.shared.start(backgroundView: view)
         NextcloudKit.shared.download(
             serverUrlFileName: url,
-            fileNameLocalPath: fileNameLocalPath,
+            fileNameLocalPath: downloadURL.path,
             account: metadata.account,
             requestHandler: { _ in },
             taskHandler: { task in
@@ -435,6 +440,7 @@ final class NCViewerDirectEditing: UIViewController, WKNavigationDelegate, WKScr
                 }
 
                 guard error == .success, account == self.metadata.account else {
+                    try? FileManager.default.removeItem(at: downloadURL.deletingLastPathComponent())
                     Task {
                         let windowScene = SceneManager.shared.getWindow(sceneIdentifier: self.sceneIdentifier)?.windowScene
                         await showErrorBanner(windowScene: windowScene, text: error.errorDescription, errorCode: error.errorCode)
@@ -442,17 +448,18 @@ final class NCViewerDirectEditing: UIViewController, WKNavigationDelegate, WKScr
                     return
                 }
 
-                var item = fileNameLocalPath
-                if let disposition = NextcloudKit.shared.nkCommonInstance.findHeader(
-                    "Content-Disposition",
-                    allHeaderFields: response?.response?.allHeaderFields
-                ), let filenameContentDisposition = self.filenameFromContentDisposition(disposition) {
-                    fileName = filenameContentDisposition
-                    item = self.utilityFileSystem.createServerUrl(
-                        serverUrl: self.utilityFileSystem.directoryUserData,
-                        fileName: fileName
+                let item: URL
+                do {
+                    item = try NCUtilityFileSystem.finishDocumentExport(
+                        at: downloadURL,
+                        contentDisposition: NextcloudKit.shared.nkCommonInstance.findHeader(
+                            "Content-Disposition", allHeaderFields: response?.response?.allHeaderFields
+                        )
                     )
-                    _ = self.utilityFileSystem.moveFile(atPath: fileNameLocalPath, toPath: item)
+                } catch {
+                    try? FileManager.default.removeItem(at: downloadURL.deletingLastPathComponent())
+                    self.showDocumentExportError(error)
+                    return
                 }
 
                 if type == "print" {
@@ -462,11 +469,11 @@ final class NCViewerDirectEditing: UIViewController, WKNavigationDelegate, WKScr
                     printInfo.orientation = .portrait
                     printInfo.jobName = "Document"
                     printController.printInfo = printInfo
-                    printController.printingItem = URL(fileURLWithPath: item)
+                    printController.printingItem = item
                     printController.present(from: .zero, in: self.view, animated: true)
                 } else {
                     self.documentController = UIDocumentInteractionController()
-                    self.documentController?.url = URL(fileURLWithPath: item)
+                    self.documentController?.url = item
                     self.documentController?.presentOptionsMenu(from: .zero, in: self.view, animated: true)
                 }
             }
@@ -514,30 +521,26 @@ final class NCViewerDirectEditing: UIViewController, WKNavigationDelegate, WKScr
         return nil
     }
 
-    private func filenameFromContentDisposition(_ disposition: String) -> String? {
-        guard let range = disposition.range(of: "filename=") else {
-            return nil
+    private func showDocumentExportError(_ error: Error) {
+        Task {
+            let windowScene = SceneManager.shared.getWindow(sceneIdentifier: self.sceneIdentifier)?.windowScene
+            await showErrorBanner(windowScene: windowScene, text: error.localizedDescription)
         }
-
-        var value = String(disposition[range.upperBound...]).trimmingCharacters(in: .whitespaces)
-        if let semicolonIndex = value.firstIndex(of: ";") {
-            value = String(value[..<semicolonIndex])
-        }
-        value = value.trimmingCharacters(in: CharacterSet(charactersIn: "\""))
-
-        return value.isEmpty ? nil : value
     }
 
     private func postRichDocumentsAsset(fileName: String, url: String) {
+        guard let function = Self.richDocumentsAssetJavaScript(fileName: fileName, url: url) else { return }
+        webView.evaluateJavaScript(function)
+    }
+
+    static func richDocumentsAssetJavaScript(fileName: String, url: String) -> String? {
         guard let fileNameData = try? JSONEncoder().encode(fileName),
               let urlData = try? JSONEncoder().encode(url),
               let fileNameLiteral = String(data: fileNameData, encoding: .utf8),
               let urlLiteral = String(data: urlData, encoding: .utf8) else {
-            return
+            return nil
         }
-
-        let function = "OCA.RichDocuments.documentsMain.postAsset(\(fileNameLiteral), \(urlLiteral))"
-        webView.evaluateJavaScript(function)
+        return "OCA.RichDocuments.documentsMain.postAsset(\(fileNameLiteral), \(urlLiteral))"
     }
 }
 

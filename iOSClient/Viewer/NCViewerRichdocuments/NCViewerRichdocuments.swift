@@ -209,9 +209,6 @@ class NCViewerRichdocuments: UIViewController, WKNavigationDelegate, WKScriptMes
                         guard let type = values["Type"] as? String else { return }
                         guard let urlString = values["URL"] as? String else { return }
                         guard let url = URL(string: urlString) else { return }
-                        var fileName = (metadata.fileName as NSString).deletingPathExtension
-                        let fileNameLocalPath = utilityFileSystem.createServerUrl(serverUrl: utilityFileSystem.directoryUserData, fileName: fileName)
-
                         if type == "slideshow" {
                             if let browserWebVC = UIStoryboard(name: "NCBrowserWeb", bundle: nil).instantiateInitialViewController() as? NCBrowserWeb {
 
@@ -222,8 +219,19 @@ class NCViewerRichdocuments: UIViewController, WKNavigationDelegate, WKScriptMes
                             return
                         } else {
                             // TYPE PRINT - DOWNLOAD
+                            let downloadURL: URL
+                            do {
+                                guard !utilityFileSystem.directoryUserData.isEmpty else { throw CocoaError(.fileWriteInvalidFileName) }
+                                downloadURL = try NCUtilityFileSystem.createDocumentExportURL(
+                                    fileName: metadata.fileName,
+                                    in: URL(fileURLWithPath: utilityFileSystem.directoryUserData, isDirectory: true)
+                                )
+                            } catch {
+                                showDocumentExportError(error)
+                                return
+                            }
                             NCActivityIndicator.shared.start(backgroundView: view)
-                            NextcloudKit.shared.download(serverUrlFileName: url, fileNameLocalPath: fileNameLocalPath, account: self.metadata.account, requestHandler: { _ in
+                            NextcloudKit.shared.download(serverUrlFileName: url, fileNameLocalPath: downloadURL.path, account: self.metadata.account, requestHandler: { _ in
                             }, taskHandler: { task in
                                 Task {
                                     let ocId = self.metadata.ocId
@@ -250,24 +258,19 @@ class NCViewerRichdocuments: UIViewController, WKNavigationDelegate, WKScriptMes
                                                                                 etag: etag)
                                 }
                                 if error == .success && account == self.metadata.account {
-                                    var item = fileNameLocalPath
-                                    if let disposition = NextcloudKit.shared.nkCommonInstance.findHeader("Content-Disposition", allHeaderFields: allHeaderFields),
-                                        let filenameContentDisposition = self.filenameFromContentDisposition(disposition) {
-                                         fileName = filenameContentDisposition
-                                         item = self.utilityFileSystem.createServerUrl(serverUrl: self.utilityFileSystem.directoryUserData, fileName: fileName)
-                                         _ = self.utilityFileSystem.moveFile(atPath: fileNameLocalPath, toPath: item)
+                                    let item: URL
+                                    do {
+                                        item = try NCUtilityFileSystem.finishDocumentExport(
+                                            at: downloadURL,
+                                            contentDisposition: NextcloudKit.shared.nkCommonInstance.findHeader(
+                                                "Content-Disposition", allHeaderFields: allHeaderFields
+                                            )
+                                        )
+                                    } catch {
+                                        try? FileManager.default.removeItem(at: downloadURL.deletingLastPathComponent())
+                                        self.showDocumentExportError(error)
+                                        return
                                     }
-
-                                    /*
-                                    if let allHeaderFields {
-                                        if let disposition = headers["Content-Disposition"] as? String,
-                                           let filenameContentDisposition = self.filenameFromContentDisposition(disposition) {
-                                            fileName = filenameContentDisposition
-                                            item = self.utilityFileSystem.createServerUrl(serverUrl: self.utilityFileSystem.directoryUserData, fileName: fileName)
-                                            _ = self.utilityFileSystem.moveFile(atPath: fileNameLocalPath, toPath: item)
-                                        }
-                                    }
-                                    */
 
                                     if type == "print" {
                                         let pic = UIPrintInteractionController.shared
@@ -276,14 +279,15 @@ class NCViewerRichdocuments: UIViewController, WKNavigationDelegate, WKScriptMes
                                         printInfo.orientation = UIPrintInfo.Orientation.portrait
                                         printInfo.jobName = "Document"
                                         pic.printInfo = printInfo
-                                        pic.printingItem = URL(fileURLWithPath: item)
+                                        pic.printingItem = item
                                         pic.present(from: CGRect.zero, in: self.view, animated: true, completionHandler: { _, _, _ in })
                                     } else {
                                         self.documentController = UIDocumentInteractionController()
-                                        self.documentController?.url = URL(fileURLWithPath: item)
+                                        self.documentController?.url = item
                                         self.documentController?.presentOptionsMenu(from: CGRect.zero, in: self.view, animated: true)
                                     }
                                 } else {
+                                    try? FileManager.default.removeItem(at: downloadURL.deletingLastPathComponent())
                                     Task {
                                         let windowScene = SceneManager.shared.getWindow(sceneIdentifier: self.sceneIdentifier)?.windowScene
                                         await showErrorBanner(windowScene: windowScene, text: error.errorDescription, errorCode: error.errorCode)
@@ -338,8 +342,7 @@ class NCViewerRichdocuments: UIViewController, WKNavigationDelegate, WKScriptMes
             NextcloudKit.shared.createRichdocumentsAssetURL(filePath: path, account: metadata.account) { _ in
             } completion: { _, url, _, error in
                 if error == .success, let url {
-                    let functionJS = "OCA.RichDocuments.documentsMain.postAsset('\(metadata.fileNameView)', '\(url)')"
-                    self.webView.evaluateJavaScript(functionJS, completionHandler: { _, _ in })
+                    self.postRichDocumentsAsset(fileName: metadata.fileNameView, url: url)
                 } else {
                     Task {
                         let windowScene = SceneManager.shared.getWindow(sceneIdentifier: self.sceneIdentifier)?.windowScene
@@ -356,8 +359,7 @@ class NCViewerRichdocuments: UIViewController, WKNavigationDelegate, WKScriptMes
         NextcloudKit.shared.createRichdocumentsAssetURL(filePath: path, account: metadata.account) { _ in
         } completion: { _, url, _, error in
             if error == .success, let url {
-                let functionJS = "OCA.RichDocuments.documentsMain.postAsset('\(metadata.fileNameView)', '\(url)')"
-                self.webView.evaluateJavaScript(functionJS, completionHandler: { _, _ in })
+                self.postRichDocumentsAsset(fileName: metadata.fileNameView, url: url)
             } else {
                 Task {
                     let windowScene = SceneManager.shared.getWindow(sceneIdentifier: self.sceneIdentifier)?.windowScene
@@ -393,18 +395,16 @@ class NCViewerRichdocuments: UIViewController, WKNavigationDelegate, WKScriptMes
 
     // MARK: - Helper
 
-    func filenameFromContentDisposition(_ disposition: String) -> String? {
-        if let range = disposition.range(of: "filename=") {
-            var value = String(disposition[range.upperBound...]).trimmingCharacters(in: .whitespaces)
-            // Cut at next ';' if present
-            if let semi = value.firstIndex(of: ";") {
-                value = String(value[..<semi])
-            }
-            // Remove optional quotes
-            value = value.trimmingCharacters(in: CharacterSet(charactersIn: "\""))
-            return value.isEmpty ? nil : value
+    private func showDocumentExportError(_ error: Error) {
+        Task {
+            let windowScene = SceneManager.shared.getWindow(sceneIdentifier: self.sceneIdentifier)?.windowScene
+            await showErrorBanner(windowScene: windowScene, text: error.localizedDescription)
         }
-        return nil
+    }
+
+    private func postRichDocumentsAsset(fileName: String, url: String) {
+        guard let function = NCViewerDirectEditing.richDocumentsAssetJavaScript(fileName: fileName, url: url) else { return }
+        webView.evaluateJavaScript(function)
     }
 }
 

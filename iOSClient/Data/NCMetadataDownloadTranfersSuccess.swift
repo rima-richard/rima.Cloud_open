@@ -71,36 +71,23 @@ actor NCMetadataDownloadTranfersSuccess {
         }
 
         for metadata in metadatas {
-            // E2EE
-            if let result = await NCManageDatabase.shared.getE2eEncryptionAsync(
-                predicate: NSPredicate(format: "fileNameIdentifier == %@ AND serverUrl == %@",
-                                       metadata.fileName,
-                                       metadata.serverUrl)
-            ) {
-                NCEndToEndEncryption.shared().decryptFile(metadata.fileName,
-                                                          fileNameView: metadata.fileNameView,
-                                                          ocId: metadata.ocId,
-                                                          userId: metadata.userId,
-                                                          urlBase: metadata.urlBase,
-                                                          key: result.key,
-                                                          initializationVector: result.initializationVector,
-                                                          authenticationTag: result.authenticationTag)
+            let error = await NCNetworking.shared.authenticateDownloadedFile(withMetadata: metadata)
+            guard error == .success else {
+                await NCNetworking.shared.downloadError(withMetadata: metadata, error: error)
+                continue
             }
-
             metadatasLocalFiles.append(metadata)
-
         }
 
         // added metadatas
-        await NCManageDatabase.shared.addMetadatasAsync(metadatas)
+        await NCManageDatabase.shared.addMetadatasAsync(metadatasLocalFiles)
         // Local File
         await NCManageDatabase.shared.addLocalFilesAsync(metadatas: metadatasLocalFiles)
 
         if !NCNetworking.shared.isInBackground() {
             // TransferDispatcher — notify outside of shared-state mutation
             await NCNetworking.shared.transferDispatcher.notifyAllDelegates { delegate in
-                for item in items {
-                    let metadata = item.metadata
+                for metadata in metadatasLocalFiles {
                     delegate.transferChange(networkingStatus: NCGlobal.shared.networkingStatusDownloaded,
                                             account: metadata.account,
                                             fileName: metadata.fileName,
@@ -117,6 +104,6 @@ actor NCMetadataDownloadTranfersSuccess {
             delegate.metadataDownloadTransferDidFlush()
         }
 
-        nkLog(tag: NCGlobal.shared.logTagMetadataDownloadTransfers, message: "Download flush successful (\(metadatas.count))", consoleOnly: true)
+        nkLog(tag: NCGlobal.shared.logTagMetadataDownloadTransfers, message: "Download flush successful (\(metadatasLocalFiles.count))", consoleOnly: true)
     }
 }

@@ -1,7 +1,7 @@
 SPDX-FileCopyrightText: 2026 rima Pflege GmbH
 SPDX-License-Identifier: GPL-3.0-or-later
 
-rima.Cloud iPhone - 1.0.0 (26)
+rima.Cloud iPhone - 1.0.0 (27)
 
 Based on Nextcloud iOS 35.1.0, upstream commit dc214c4c92125da009bf9581b83462d4ba36d5fb.
 Changes: rima.Cloud brand, Petrol #006B78, cloud.rima-pflege.de preset,
@@ -51,11 +51,23 @@ Working repository (private): https://github.com/rima-richard/rima.Cloud
 Source-publication repository: https://github.com/rima-richard/rima.Cloud_open
 The owner authorized making rima.Cloud_open public on 2026-10-16.
 The working repository remains private; GitHub Actions remain disabled on both.
-Build26 changes only the in-app Source Code link to the rima.Cloud_open
-repository and increments the build number across the app and extensions.
-The corresponding immutable source tag is v1.0.0-build26. The publication
-repository and tag are reachable anonymously. Build26 was installed and
-launched on the authorized iPhone17Pro. This build is prepared locally
-without an Apple upload, review submission or app publication.
-Later documentation-only commits record the visibility change; they do
-not change the tagged Build26 application source or its signed artifacts.
+Build27 authenticates decrypted files before atomic publication, pins CMS
+signers to their actual public keys, commits E2EE metadata and monotonic
+counters transactionally, and excludes unauthenticated historical recipients.
+An unknown shared-root signer requires an explicit SHA-256 public-key
+fingerprint comparison with the sender through an independent channel.
+The sender can copy their fingerprint from E2EE settings. Approval is
+account/root scoped and is removed with local E2EE credentials.
+
+Document exports and Share filenames are confined to their intended
+locations without overwriting unrelated files. Editor asset arguments are
+JSON serialized. Login logging omits token, grant and callback URL values.
+The simulator build and all 153 unit tests in 20 suites pass, including
+malicious-input and compatibility regression tests without production accounts.
+SwiftLint passes for the changed Swift implementation files. Generated test-only RSA keys and certificates are
+included under Tests; they are not operational credentials.
+
+The immutable source tag is v1.0.0-build27. Build26 and its tag remain intact.
+This build is prepared locally without an Apple upload, review submission
+or app publication. Device installation status is recorded separately;
+source publication does not imply an update on a physical iPhone.

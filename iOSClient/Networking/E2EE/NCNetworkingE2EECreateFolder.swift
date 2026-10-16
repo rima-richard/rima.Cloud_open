@@ -177,7 +177,13 @@ class NCNetworkingE2EECreateFolder: NSObject {
 
         let object = tableE2eEncryption.init(account: session.account, ocIdServerUrl: directory.ocId, fileNameIdentifier: fileNameIdentifier)
         object.blob = "folders"
-        if let results = await self.database.getE2eEncryptionAsync(predicate: NSPredicate(format: "account == %@ AND serverUrl == %@", session.account, serverUrl)) {
+        let usableRows: [tableE2eEncryption]
+        do {
+            usableRows = try await database.getUsableE2eEncryptionsAsync(account: session.account, serverUrl: serverUrl, ocIdServerUrl: directory.ocId)
+        } catch {
+            return .invalidData
+        }
+        if let results = usableRows.first {
             object.metadataKey = results.metadataKey
             object.metadataKeyIndex = results.metadataKeyIndex
         } else {
@@ -194,7 +200,11 @@ class NCNetworkingE2EECreateFolder: NSObject {
         object.initializationVector = initializationVector
         object.mimeType = "httpd/unix-directory"
         object.serverUrl = serverUrl
-        await self.database.addE2eEncryptionAsync(object)
+        do {
+            try await self.database.addLocallyGeneratedE2eEncryptionAsync(object)
+        } catch {
+            return .invalidData
+        }
 
         // UPLOAD METADATA
         //
