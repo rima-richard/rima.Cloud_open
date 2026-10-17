@@ -51,7 +51,7 @@ GitHub stellt über **Code → Download ZIP** auch ein Quellarchiv bereit.
 Die Website-Service-Seite kann auf dieses Repository bzw. den passenden
 Release-Tag verweisen. Ein App-Installationslink wird hier nicht beworben.
 
-## Stand der Bereitstellung
+## Technischer Quellstand
 
 Build27 enthält Sicherheitskorrekturen für E2EE-Authentifizierung,
 Empfängerzustand und Replay-Zähler, sichere Dokumentexporte und
@@ -62,19 +62,35 @@ in den E2EE-Einstellungen sichtbar. Normale Cloud-Ordner benötigen diesen
 Abgleich nicht. Die Bestätigung gilt nur für das Konto und den verschlüsselten
 Stammordner; lokale E2EE-Entfernung löscht auch diese Bestätigungen.
 
-Der Simulator-Build und 153 lokale Unit-Tests in 20 Testsuiten sind
-erfolgreich geprüft. Der Stilcheck der geänderten Swift-Dateien ist bestanden.
-Es erfolgt kein Upload dieses Builds zu Apple. Die enthaltenen Kryptografie-Testschlüssel sind ausschließlich
-synthetische Testdaten und dürfen niemals produktiv verwendet werden.
+Der Simulator-Build und 153 lokale Unit-Tests in 20 Testsuiten wurden
+in der Entwicklungsprüfung dieses Quellstands erfolgreich geprüft.
+Der Stilcheck der geänderten Swift-Dateien ist bestanden. Die enthaltenen
+Kryptografie-Testschlüssel sind ausschließlich synthetische Testdaten
+und dürfen niemals produktiv verwendet werden.
 
-Build25 wurde zuvor im Simulator geprüft, auf
-dem iPhone17Pro installiert und bei App Store Connect hochgeladen.
-Die App ist noch nicht zur App-Prüfung eingereicht und nicht veröffentlicht.
-Unlisted-Verteilung ist vorgesehen. Das Quellcode-Repository
-`rima-richard/rima.Cloud_open` ist seit dem 16.10.2026 auf Freigabe des
-Projektinhabers öffentlich erreichbar. Das Arbeitsrepository
-`rima-richard/rima.Cloud` bleibt privat. Veröffentlicht wurde ausschließlich
-Quellcode; ein App-Installationslink wird weiterhin nur intern verteilt.
+### Quellstand und App-Store-Status
+
+Die früheren Angaben zum Upload von Build25 und zum in der damaligen
+Entwicklungsprüfung nicht ausgeführten Upload von Build27 beschreiben
+historische Prüfschritte. Sie sind keine aktuelle Statusanzeige für
+App Store Connect.
+
+Der Tag `v1.0.0-build27` bezeichnet einen veröffentlichten Quellstand.
+Weder dieser Tag noch die lokalen Testergebnisse bestätigen, welcher Build
+aktuell bei Apple zugeordnet, eingereicht, genehmigt oder veröffentlicht ist.
+Maßgeblich für diese Fragen ist der aktuelle Eintrag in App Store Connect.
+Die archivierten Build-Tags bleiben unverändert; aktuelle redaktionelle
+Klarstellungen stehen im README des Hauptzweigs.
+
+[Support, Quellcode und Lizenzen](https://rima-pflege.de/apps-lizenzen#rima-cloud)
+sowie die [Cloud-Datenschutzhinweise](https://rima-pflege.de/datenschutz#rima-cloud)
+sind öffentlich erreichbar. Die Veröffentlichung des Quellcodes ist von
+der App-Verteilung getrennt. Ein späterer Unlisted-Installationslink wird
+von rima intern verteilt.
+
+Das Quellcode-Repository `rima-richard/rima.Cloud_open` ist seit dem
+16.10.2026 auf Freigabe des Projektinhabers öffentlich erreichbar.
+Das Arbeitsrepository `rima-richard/rima.Cloud` bleibt privat.
 
 ## Übernommene Projektinformationen
 
